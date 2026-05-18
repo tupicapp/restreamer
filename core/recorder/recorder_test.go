@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"restreamer/internal/config"
-	"restreamer/internal/storage"
+	"restreamer/core/config"
+	"restreamer/core/storage"
 	shared "restreamer/core/shared"
 )
 

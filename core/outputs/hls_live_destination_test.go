@@ -8,8 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"restreamer/internal/config"
-	"restreamer/internal/storage"
+	"restreamer/core/config"
+	"restreamer/core/storage"
 	"restreamer/core/shared"
 	"restreamer/core/test"
 	"sort"
@@ -988,7 +988,11 @@ func getTestConfig(t *testing.T) (*config.Config, error) {
 			return
 		}
 
-		testConfig = config.New()
+		testConfig = &config.Config{
+			TestURLs: config.TestURLs{
+				RTMPURL: viper.GetString("test_urls.rtmp_url"),
+			},
+		}
 	})
 
 	return testConfig, testConfigErr
