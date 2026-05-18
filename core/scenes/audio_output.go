@@ -3,7 +3,7 @@ package scenes
 import (
 	"time"
 
-	shared "restreamer/irajstreamer/core/shared"
+	shared "restreamer/core/shared"
 )
 
 func (s *Scene) consumeAudio() {

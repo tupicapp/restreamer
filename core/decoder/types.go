@@ -1,6 +1,6 @@
 package decoder
 
-import "restreamer/irajstreamer/core/raw"
+import "restreamer/core/raw"
 
 type VideoDecoder interface {
 	Start() error

@@ -3,7 +3,7 @@ package raw
 import (
 	"fmt"
 
-	shared "restreamer/irajstreamer/core/shared"
+	shared "restreamer/core/shared"
 )
 
 const (

@@ -1,7 +1,7 @@
 package irajstreamer
 
 import (
-	"restreamer/irajstreamer/core/logger"
+	"restreamer/core/logger"
 	"sync"
 	"time"
 

@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	shared "restreamer/irajstreamer/core/shared"
+	shared "restreamer/core/shared"
 
 	"go.uber.org/zap"
 )

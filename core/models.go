@@ -1,6 +1,6 @@
 package irajstreamer
 
-import shared "restreamer/irajstreamer/core/shared"
+import shared "restreamer/core/shared"
 
 type StreamType = shared.StreamType
 type Stream = shared.Stream

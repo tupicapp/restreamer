@@ -2,15 +2,14 @@ package streamfactory
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	core "restreamer/irajstreamer/core"
-	"restreamer/irajstreamer/core/inputs"
-	"restreamer/irajstreamer/core/outputs"
-	"restreamer/internal/config"
-	"restreamer/internal/storage"
+	core "restreamer/core"
+	"restreamer/core/inputs"
+	"restreamer/core/outputs"
 )
 
 type streamKind string
@@ -77,7 +76,7 @@ type HLSOutputOptions struct {
 //
 // outputPath may be:
 //   - a directory: /tmp/stream/         → segments written there
-//   - an m3u8 file path: /tmp/stream/stream.m3u8 → parent dir used, filename fixed to stream.m3u8
+//   - an m3u8 file path: /tmp/stream/stream.m3u8 → parent dir used
 func NewHLSOutput(id, outputPath string, opts HLSOutputOptions) (core.Stream, error) {
 	abs, err := filepath.Abs(outputPath)
 	if err != nil {
@@ -89,9 +88,9 @@ func NewHLSOutput(id, outputPath string, opts HLSOutputOptions) (core.Stream, er
 		dir = filepath.Dir(abs)
 	}
 
-	folder := storage.NewLocal(&config.Config{
-		Storage: config.Storage{RecordingsRoot: filepath.Dir(dir)},
-	}).RecordingsRoot().Folder(filepath.Base(dir))
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, fmt.Errorf("create output directory %q: %w", dir, err)
+	}
 
 	hlsOpts := make([]outputs.HLSLiveOption, 0, 4)
 	if opts.SegmentDuration > 0 {
@@ -107,7 +106,7 @@ func NewHLSOutput(id, outputPath string, opts HLSOutputOptions) (core.Stream, er
 		}
 	}
 
-	return outputs.NewHLSLiveDestination(id, folder, hlsOpts...)
+	return outputs.NewHLSLiveDestination(id, dir, hlsOpts...)
 }
 
 // IsHLSOutputPath reports whether the given URL/path should be treated as an

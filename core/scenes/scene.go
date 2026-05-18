@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"time"
 
-	"restreamer/irajstreamer/core/decoder"
-	"restreamer/irajstreamer/core/encoder"
-	"restreamer/irajstreamer/core/raw"
-	shared "restreamer/irajstreamer/core/shared"
+	"restreamer/core/decoder"
+	"restreamer/core/encoder"
+	"restreamer/core/raw"
+	shared "restreamer/core/shared"
 )
 
 func NewScene(id string, canvas raw.CanvasSpec, inputs []Input, opts ...Option) (*Scene, error) {

@@ -1,8 +1,8 @@
 package filters
 
 import (
-	"restreamer/irajstreamer/core/logger"
-	"restreamer/irajstreamer/core/shared"
+	"restreamer/core/logger"
+	"restreamer/core/shared"
 	"sort"
 	"sync"
 	"time"

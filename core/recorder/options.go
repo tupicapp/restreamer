@@ -1,7 +1,7 @@
 package recorder
 
 import (
-	ilogger "restreamer/irajstreamer/core/logger"
+	ilogger "restreamer/core/logger"
 	"strings"
 	"time"
 

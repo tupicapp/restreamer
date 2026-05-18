@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"restreamer/irajstreamer/core/shared"
+	"restreamer/core/shared"
 	"sync"
 	"time"
 

@@ -1,6 +1,6 @@
 package encoder
 
-import shared "restreamer/irajstreamer/core/shared"
+import shared "restreamer/core/shared"
 
 type VideoEncoder interface {
 	Start() error

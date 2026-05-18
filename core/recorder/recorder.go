@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	filters "restreamer/irajstreamer/core/filters"
-	shared "restreamer/irajstreamer/core/shared"
+	filters "restreamer/core/filters"
+	shared "restreamer/core/shared"
 
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/mpeg4audio"
 	mediats "github.com/bluenviron/mediacommon/v2/pkg/formats/mpegts"

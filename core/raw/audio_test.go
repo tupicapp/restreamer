@@ -3,7 +3,7 @@ package raw
 import (
 	"testing"
 
-	shared "restreamer/irajstreamer/core/shared"
+	shared "restreamer/core/shared"
 )
 
 func TestAudioFrameValidate(t *testing.T) {

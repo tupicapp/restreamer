@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
-	ilogger "restreamer/irajstreamer/core/logger"
-	shared "restreamer/irajstreamer/core/shared"
+	ilogger "restreamer/core/logger"
+	shared "restreamer/core/shared"
 
 	mp4codecs "github.com/bluenviron/mediacommon/v2/pkg/formats/mp4/codecs"
 	"go.uber.org/zap"

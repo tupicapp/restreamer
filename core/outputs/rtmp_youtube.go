@@ -6,7 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"restreamer/irajstreamer/core/shared"
+	"restreamer/core/shared"
 	"sync"
 	"time"
 

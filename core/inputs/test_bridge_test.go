@@ -2,7 +2,7 @@ package inputs
 
 import (
 	"net/http/httptest"
-	"restreamer/irajstreamer/core/test"
+	"restreamer/core/test"
 	"testing"
 	"time"
 )

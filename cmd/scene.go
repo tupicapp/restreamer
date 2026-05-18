@@ -11,10 +11,10 @@ import (
 	"syscall"
 	"time"
 
-	core "restreamer/irajstreamer/core"
-	"restreamer/irajstreamer/core/raw"
-	sceneengine "restreamer/irajstreamer/core/scenes"
-	"restreamer/irajstreamer/core/streamfactory"
+	irajstreamer "restreamer/core"
+	"restreamer/core/raw"
+	scenes "restreamer/core/scenes"
+	"restreamer/core/streamfactory"
 
 	"github.com/spf13/cobra"
 )
@@ -59,6 +59,9 @@ type sceneSpec struct {
 	audioRatios         []int
 	outputFPS           int
 	startupTimeout      time.Duration
+	hlsSegmentDuration  time.Duration
+	hlsPlaylistSize     int
+	hlsCleanInterval    time.Duration
 }
 
 type sceneEntry struct {
@@ -136,11 +139,11 @@ func shouldShowSceneHelp(opts sceneCommandOptions, args []string) bool {
 		len(args) == 0
 }
 
-func toServiceSceneMode(mode sceneMode) sceneengine.SceneMode {
+func toServiceSceneMode(mode sceneMode) scenes.SceneMode {
 	if mode == sceneModePassthrough {
-		return sceneengine.SceneModePassthrough
+		return scenes.SceneModePassthrough
 	}
-	return sceneengine.SceneModeCompose
+	return scenes.SceneModeCompose
 }
 
 // ─── single-scene run ─────────────────────────────────────────────────────────
@@ -153,10 +156,10 @@ func runSceneCommand(parent context.Context, spec sceneSpec) error {
 	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	sceneService := sceneengine.NewService()
+	sceneService := scenes.NewService()
 	return sceneService.RunScene(
 		ctx,
-		sceneengine.SceneSpec{
+		scenes.SceneSpec{
 			Mode:           toServiceSceneMode(spec.mode),
 			SceneID:        spec.sceneID,
 			InputURLs:      append([]string(nil), spec.inputURLs...),
@@ -169,7 +172,7 @@ func runSceneCommand(parent context.Context, spec sceneSpec) error {
 			OutputFPS:      spec.outputFPS,
 			StartupTimeout: spec.startupTimeout,
 		},
-		func(ctx context.Context, entries []sceneengine.SceneEntry, streamer *core.Streamer) error {
+		func(ctx context.Context, entries []scenes.SceneEntry, streamer *irajstreamer.Streamer) error {
 			uiEntries := make([]sceneEntry, 0, len(entries))
 			for _, entry := range entries {
 				uiEntries = append(uiEntries, sceneEntry{id: entry.ID, name: entry.Name})
@@ -196,7 +199,7 @@ func buildSceneSpec(opts sceneCommandOptions, args []string) (sceneSpec, error) 
 	if opts.audioFrom < 0 || opts.audioFrom >= len(opts.inputs) {
 		return sceneSpec{}, fmt.Errorf("--audio-from must be between 0 and %d", len(opts.inputs)-1)
 	}
-	audioRatios, err := sceneengine.NormalizeAudioMixRatiosForCLI(len(opts.inputs), opts.audioRatios)
+	audioRatios, err := scenes.NormalizeAudioMixRatiosForCLI(len(opts.inputs), opts.audioRatios)
 	if err != nil {
 		return sceneSpec{}, err
 	}
@@ -293,7 +296,7 @@ func runMultiSceneCommand(parent context.Context, opts sceneCommandOptions, args
 	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	definitions := make([]sceneengine.MultiSceneDefinition, 0, len(opts.sceneDefs))
+	definitions := make([]scenes.MultiSceneDefinition, 0, len(opts.sceneDefs))
 
 	for idx, def := range opts.sceneDefs {
 		name, inputURLs, layoutStrs, parseErr := parseSceneDef(def)
@@ -310,17 +313,17 @@ func runMultiSceneCommand(parent context.Context, opts sceneCommandOptions, args
 			layouts = append(layouts, layout)
 		}
 
-		definitions = append(definitions, sceneengine.MultiSceneDefinition{
+		definitions = append(definitions, scenes.MultiSceneDefinition{
 			Name:     name,
 			InputURL: append([]string(nil), inputURLs...),
 			Layouts:  append([]raw.VideoLayout(nil), layouts...),
 		})
 	}
 
-	sceneService := sceneengine.NewService()
+	sceneService := scenes.NewService()
 	return sceneService.RunMultiScene(
 		ctx,
-		sceneengine.MultiSceneSpec{
+		scenes.MultiSceneSpec{
 			OutputURL:      outputURL,
 			HLSOptions:     sceneHLSOptions(opts),
 			HasCanvas:      hasCanvas,
@@ -331,7 +334,7 @@ func runMultiSceneCommand(parent context.Context, opts sceneCommandOptions, args
 			StartupTimeout: opts.startupTimeout,
 			Definitions:    definitions,
 		},
-		func(ctx context.Context, entries []sceneengine.SceneEntry, streamer *core.Streamer) error {
+		func(ctx context.Context, entries []scenes.SceneEntry, streamer *irajstreamer.Streamer) error {
 			uiEntries := make([]sceneEntry, 0, len(entries))
 			for _, entry := range entries {
 				uiEntries = append(uiEntries, sceneEntry{id: entry.ID, name: entry.Name})
@@ -367,7 +370,7 @@ func parseSceneDef(s string) (name string, inputs []string, layouts []string, er
 
 // ─── interactive TUI ─────────────────────────────────────────────────────────
 
-func runSceneSwitcherTUI(ctx context.Context, entries []sceneEntry, streamer *core.Streamer) error {
+func runSceneSwitcherTUI(ctx context.Context, entries []sceneEntry, streamer *irajstreamer.Streamer) error {
 	if err := setTermRaw(); err != nil {
 		// No TTY — just block until context is cancelled.
 		<-ctx.Done()

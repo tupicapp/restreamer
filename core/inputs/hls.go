@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	shared "restreamer/irajstreamer/core/shared"
+	shared "restreamer/core/shared"
 
 	"github.com/bluenviron/gohlslib/v2/pkg/playlist"
 	"go.uber.org/zap"

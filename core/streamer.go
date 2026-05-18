@@ -13,10 +13,10 @@ import (
 	"sync"
 	"time"
 
-	"restreamer/irajstreamer/core/logger"
-	"restreamer/irajstreamer/core/outputs"
-	"restreamer/irajstreamer/core/recorder"
-	shared "restreamer/irajstreamer/core/shared"
+	"restreamer/core/logger"
+	"restreamer/core/outputs"
+	"restreamer/core/recorder"
+	shared "restreamer/core/shared"
 
 	"go.uber.org/zap"
 )

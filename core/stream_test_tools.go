@@ -4,7 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"restreamer/irajstreamer/core/logger"
+	"restreamer/core/logger"
 	"strings"
 	"testing"
 	"time"

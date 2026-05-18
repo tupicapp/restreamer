@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	shared "restreamer/irajstreamer/core/shared"
+	shared "restreamer/core/shared"
 	pkgrtmp "restreamer/pkg/rtmp"
 
 	"github.com/bluenviron/gortmplib"

@@ -10,7 +10,7 @@ import (
 
 	"restreamer/internal/config"
 	"restreamer/internal/storage"
-	shared "restreamer/irajstreamer/core/shared"
+	shared "restreamer/core/shared"
 )
 
 func TestRecorder_WiresGOPBufferAndSessionNaming(t *testing.T) {

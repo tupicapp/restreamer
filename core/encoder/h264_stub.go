@@ -5,7 +5,7 @@ package encoder
 import (
 	"fmt"
 
-	"restreamer/irajstreamer/core/raw"
+	"restreamer/core/raw"
 )
 
 func NewH264Encoder(_ string, _ <-chan *raw.VideoFrame, _ ...H264EncoderOption) (VideoEncoder, error) {

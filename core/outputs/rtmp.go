@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	filters "restreamer/irajstreamer/core/filters"
-	"restreamer/irajstreamer/core/shared"
+	filters "restreamer/core/filters"
+	"restreamer/core/shared"
 	"sync"
 	"time"
 

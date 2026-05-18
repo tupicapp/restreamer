@@ -1,7 +1,7 @@
 package inputs
 
 import (
-	shared "restreamer/irajstreamer/core/shared"
+	shared "restreamer/core/shared"
 	"time"
 )
 

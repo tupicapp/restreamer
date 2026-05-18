@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	shared "restreamer/irajstreamer/core/shared"
+	shared "restreamer/core/shared"
 
 	"github.com/bluenviron/gortmplib"
 	"github.com/bluenviron/gortmplib/pkg/codecs"

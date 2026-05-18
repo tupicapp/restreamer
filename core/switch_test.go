@@ -3,8 +3,8 @@ package irajstreamer
 import (
 	"context"
 	"fmt"
-	streaminputs "restreamer/irajstreamer/core/inputs"
-	"restreamer/irajstreamer/core/outputs"
+	streaminputs "restreamer/core/inputs"
+	"restreamer/core/outputs"
 	"testing"
 	"time"
 )

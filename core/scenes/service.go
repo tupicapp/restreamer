@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	shared "restreamer/irajstreamer/core/shared"
-	"restreamer/irajstreamer/core/streamfactory"
+	shared "restreamer/core/shared"
+	"restreamer/core/streamfactory"
 )
 
 type SceneMode string

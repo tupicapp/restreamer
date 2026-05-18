@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"restreamer/irajstreamer/core/inputs"
-	"restreamer/irajstreamer/core/raw"
-	shared "restreamer/irajstreamer/core/shared"
+	"restreamer/core/inputs"
+	"restreamer/core/raw"
+	shared "restreamer/core/shared"
 )
 
 func TestH264Decoder_DecodesRTMPReaderPackets(t *testing.T) {

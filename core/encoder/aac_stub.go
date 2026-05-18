@@ -5,7 +5,7 @@ package encoder
 import (
 	"fmt"
 
-	"restreamer/irajstreamer/core/raw"
+	"restreamer/core/raw"
 )
 
 func NewAACEncoder(_ string, _ <-chan *raw.AudioFrame, opts ...AACEncoderOption) (AudioEncoder, error) {

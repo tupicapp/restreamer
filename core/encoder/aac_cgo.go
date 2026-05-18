@@ -62,8 +62,8 @@ import (
 	"time"
 	"unsafe"
 
-	"restreamer/irajstreamer/core/raw"
-	shared "restreamer/irajstreamer/core/shared"
+	"restreamer/core/raw"
+	shared "restreamer/core/shared"
 )
 
 type aacEncoder struct {

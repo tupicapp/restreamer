@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"restreamer/irajstreamer/core/decoder"
-	"restreamer/irajstreamer/core/raw"
-	shared "restreamer/irajstreamer/core/shared"
+	"restreamer/core/decoder"
+	"restreamer/core/raw"
+	shared "restreamer/core/shared"
 )
 
 func TestScene_ComposesRawInputsAndEncodesVideo(t *testing.T) {

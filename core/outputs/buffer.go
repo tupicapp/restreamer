@@ -3,7 +3,7 @@ package outputs
 import (
 	"context"
 	"fmt"
-	"restreamer/irajstreamer/core/shared"
+	"restreamer/core/shared"
 	"sync"
 	"time"
 )

@@ -2,7 +2,7 @@ package outputs
 
 import (
 	"bytes"
-	"restreamer/irajstreamer/core/shared"
+	"restreamer/core/shared"
 	"testing"
 	"time"
 )

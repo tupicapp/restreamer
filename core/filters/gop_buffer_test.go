@@ -1,7 +1,7 @@
 package filters
 
 import (
-	"restreamer/irajstreamer/core/shared"
+	"restreamer/core/shared"
 	"testing"
 	"time"
 )

@@ -6,7 +6,7 @@ import (
 	"sort"
 	"time"
 
-	shared "restreamer/irajstreamer/core/shared"
+	shared "restreamer/core/shared"
 )
 
 func ComposeYUV420P(spec CanvasSpec, placements []VideoPlacement) (*VideoFrame, error) {

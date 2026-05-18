@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"restreamer/irajstreamer/core/raw"
-	shared "restreamer/irajstreamer/core/shared"
+	"restreamer/core/raw"
+	shared "restreamer/core/shared"
 )
 
 type Input struct {

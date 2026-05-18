@@ -10,8 +10,8 @@ import (
 	"syscall"
 	"time"
 
-	core "restreamer/irajstreamer/core"
-	"restreamer/irajstreamer/core/streamfactory"
+	core "restreamer/core"
+	"restreamer/core/streamfactory"
 
 	"github.com/spf13/cobra"
 )

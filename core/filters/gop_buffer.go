@@ -6,7 +6,7 @@ import (
 	"io"
 	"net/url"
 	"path/filepath"
-	"restreamer/irajstreamer/core/shared"
+	"restreamer/core/shared"
 	"strings"
 	"sync"
 	"time"

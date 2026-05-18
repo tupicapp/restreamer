@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	shared "restreamer/irajstreamer/core/shared"
+	shared "restreamer/core/shared"
 )
 
 type rtmpInputMockWatcher struct {

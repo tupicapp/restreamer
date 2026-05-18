@@ -7,7 +7,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"restreamer/irajstreamer/core/logger"
+	"restreamer/core/logger"
 
 	"go.uber.org/zap"
 )

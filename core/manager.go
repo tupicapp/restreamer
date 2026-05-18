@@ -2,7 +2,7 @@ package irajstreamer
 
 import (
 	"context"
-	"restreamer/irajstreamer/core/logger"
+	"restreamer/core/logger"
 	"sync"
 	"time"
 

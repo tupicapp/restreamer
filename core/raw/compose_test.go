@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	shared "restreamer/irajstreamer/core/shared"
+	shared "restreamer/core/shared"
 )
 
 func TestComposeYUV420PBackground(t *testing.T) {

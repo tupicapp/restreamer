@@ -36,7 +36,7 @@ import (
 	"time"
 	"unsafe"
 
-	shared "restreamer/irajstreamer/core/shared"
+	shared "restreamer/core/shared"
 )
 
 func ConvertPCM16AudioFrame(frame *AudioFrame, sampleRate int, channels int) (*AudioFrame, error) {

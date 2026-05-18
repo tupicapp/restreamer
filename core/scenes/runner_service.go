@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	core "restreamer/irajstreamer/core"
-	"restreamer/irajstreamer/core/streamfactory"
+	core "restreamer/core"
+	"restreamer/core/streamfactory"
 )
 
 type SwitcherRunner func(ctx context.Context, entries []SceneEntry, streamer *core.Streamer) error

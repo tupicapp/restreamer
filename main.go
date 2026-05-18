@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"restreamer/irajstreamer/cmd"
+	"restreamer/cmd"
 )
 
 func main() {

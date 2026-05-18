@@ -3,8 +3,8 @@ package test
 import (
 	"context"
 	"fmt"
-	core "restreamer/irajstreamer/core"
-	"restreamer/irajstreamer/core/shared"
+	core "restreamer/core"
+	"restreamer/core/shared"
 	"sync"
 	"time"
 )
