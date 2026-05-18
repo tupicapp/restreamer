@@ -19,6 +19,40 @@ import (
 
 const defaultHLSCleanInterval = 10 * time.Second
 
+type switchCommandOptions struct {
+	routeID        string
+	inputs         []string
+	outputs        []string
+	startupTimeout time.Duration
+}
+
+type switchBuildResult struct {
+	routeID        string
+	inputURLs      []string
+	outputURLs     []string
+	startupTimeout time.Duration
+}
+
+func buildSwitchSpec(opts switchCommandOptions, extraOutputs []string) (switchBuildResult, error) {
+	allOutputs := append(opts.outputs, extraOutputs...)
+	if len(opts.inputs) < 2 {
+		return switchBuildResult{}, fmt.Errorf("at least two -i inputs are required for switching")
+	}
+	if len(allOutputs) == 0 {
+		return switchBuildResult{}, fmt.Errorf("at least one -o output is required")
+	}
+	return switchBuildResult{
+		routeID:        opts.routeID,
+		inputURLs:      opts.inputs,
+		outputURLs:     allOutputs,
+		startupTimeout: opts.startupTimeout,
+	}, nil
+}
+
+func shouldShowSwitchHelp(opts switchCommandOptions, extraArgs []string) bool {
+	return len(opts.inputs) == 0 && len(extraArgs) == 0
+}
+
 type inputSpec struct {
 	url string
 }
