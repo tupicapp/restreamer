@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -18,26 +19,23 @@ import (
 
 const defaultHLSCleanInterval = 10 * time.Second
 
-type switchCommandOptions struct {
-	routeID             string
-	inputs              []string
-	outputs             []string
-	startupTimeout      time.Duration
-	hlsLive             bool
-	hlsSegmentDuration  time.Duration
-	hlsPlaylistSize     int
-	hlsCleanInterval    time.Duration
+type inputSpec struct {
+	url string
+}
+
+type outputSpec struct {
+	url                string
+	hlsLive            bool
+	hlsSegmentDuration time.Duration
+	hlsPlaylistSize    int
+	hlsCleanInterval   time.Duration
 }
 
 type switchSpec struct {
-	routeID             string
-	inputURLs           []string
-	outputURLs          []string
-	startupTimeout      time.Duration
-	hlsLive             bool
-	hlsSegmentDuration  time.Duration
-	hlsPlaylistSize     int
-	hlsCleanInterval    time.Duration
+	routeID        string
+	startupTimeout time.Duration
+	inputs         []inputSpec
+	outputs        []outputSpec
 }
 
 type switchEntry struct {
@@ -46,114 +44,224 @@ type switchEntry struct {
 }
 
 func NewSwitchCommand() *cobra.Command {
-	opts := switchCommandOptions{}
-
 	cmd := &cobra.Command{
-		Use:   "switch -i <input> [-i <input> ...] <output> [output ...]",
-		Short: "Route multiple live inputs to one or more outputs with interactive switching",
-		Long: "Start a passthrough router with multiple inputs and one or more outputs, then switch the active input live from an interactive terminal UI.\n\n" +
+		Use:                "switch [global-flags] [stream-flags -i <url>]... [stream-flags -o <url>]...",
+		Short:              "Route multiple live inputs to one or more outputs with interactive switching",
+		DisableFlagParsing: true,
+		Long: "Start a passthrough router with multiple inputs and one or more outputs, then switch the active input live.\n\n" +
+			"Global flags (apply to the whole command):\n" +
+			"  --route-id <id>              Route stream ID prefix (default: route-1)\n" +
+			"  --startup-timeout <duration> Max time to wait for streams to start (default: 30s)\n\n" +
+			"Per-output flags (place immediately before -o):\n" +
+			"  -l, --live                   HLS live/sliding-window mode\n" +
+			"  --segment-duration <dur>     HLS segment duration, e.g. 4s (default 2s)\n" +
+			"  --playlist-size <n>          Sliding-window segment count, live mode only (default 6)\n" +
+			"  --clean-interval <dur>       How often stale segments are removed (default 10s)\n\n" +
 			"Example:\n" +
-			"  go run irajstreamer/main.go switch \\\n" +
+			"  irajstreamer switch \\\n" +
 			"    -i rtmp://127.0.0.1:1938/live/cam1 \\\n" +
 			"    -i rtmp://127.0.0.1:1938/live/cam2 \\\n" +
-			"    rtmp://127.0.0.1:1938/live/out1 rtmp://127.0.0.1:1938/live/out2",
+			"    --live --segment-duration 4s -o ./hls/stream.m3u8 \\\n" +
+			"    -o rtmp://127.0.0.1:1938/live/out",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if shouldShowSwitchHelp(opts, args) {
-				return cmd.Help()
+			for _, a := range args {
+				if a == "-h" || a == "--help" {
+					return cmd.Help()
+				}
 			}
-
-			spec, err := buildSwitchSpec(opts, args)
+			spec, err := parseSwitchArgs(args)
 			if err != nil {
 				return err
 			}
-
+			if len(spec.inputs) == 0 && len(spec.outputs) == 0 {
+				return cmd.Help()
+			}
 			return runSwitchCommand(cmd.Context(), spec)
 		},
 	}
-
-	flags := cmd.Flags()
-	flags.StringVar(&opts.routeID, "route-id", "route-1", "Route stream ID prefix")
-	flags.StringSliceVarP(&opts.inputs, "input", "i", nil, "Input URL. Repeat for each input")
-	flags.StringSliceVarP(&opts.outputs, "output", "o", nil, "Output URL. Repeat for each output (or pass outputs as positional args)")
-	flags.DurationVar(&opts.startupTimeout, "startup-timeout", 30*time.Second, "Maximum time to wait for all streams to start")
-	flags.BoolVarP(&opts.hlsLive, "live", "l", false, "HLS live mode: sliding window playlist with segment cleanup (default is record/VOD)")
-	flags.DurationVar(&opts.hlsSegmentDuration, "segment-duration", 0, "HLS segment duration, e.g. 4s (default 2s)")
-	flags.IntVar(&opts.hlsPlaylistSize, "playlist-size", 0, "HLS sliding window size in segments, live mode only (default 6)")
-	flags.DurationVar(&opts.hlsCleanInterval, "clean-interval", defaultHLSCleanInterval, "How often stale HLS segments are removed from disk, live mode only")
-
 	return cmd
 }
 
-func shouldShowSwitchHelp(opts switchCommandOptions, args []string) bool {
-	return len(opts.inputs) == 0 && len(opts.outputs) == 0 && len(args) == 0
+func parseSwitchArgs(args []string) (switchSpec, error) {
+	spec := switchSpec{
+		routeID:        "route-1",
+		startupTimeout: 30 * time.Second,
+	}
+
+	var pendingHLSLive bool
+	var pendingSegmentDuration time.Duration
+	var pendingPlaylistSize int
+	var pendingCleanInterval time.Duration
+
+	resetPending := func() {
+		pendingHLSLive = false
+		pendingSegmentDuration = 0
+		pendingPlaylistSize = 0
+		pendingCleanInterval = 0
+	}
+
+	consume := func(i int, flag string) (string, int, error) {
+		if i+1 >= len(args) {
+			return "", i, fmt.Errorf("%s requires a value", flag)
+		}
+		return args[i+1], i + 1, nil
+	}
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+
+		switch {
+		// ── global flags ────────────────────────────────────────────────────
+		case arg == "--route-id":
+			v, next, err := consume(i, arg)
+			if err != nil {
+				return switchSpec{}, err
+			}
+			spec.routeID = v
+			i = next
+
+		case strings.HasPrefix(arg, "--route-id="):
+			spec.routeID = strings.TrimPrefix(arg, "--route-id=")
+
+		case arg == "--startup-timeout":
+			v, next, err := consume(i, arg)
+			if err != nil {
+				return switchSpec{}, err
+			}
+			d, err := time.ParseDuration(v)
+			if err != nil {
+				return switchSpec{}, fmt.Errorf("--startup-timeout: %w", err)
+			}
+			spec.startupTimeout = d
+			i = next
+
+		case strings.HasPrefix(arg, "--startup-timeout="):
+			d, err := time.ParseDuration(strings.TrimPrefix(arg, "--startup-timeout="))
+			if err != nil {
+				return switchSpec{}, fmt.Errorf("--startup-timeout: %w", err)
+			}
+			spec.startupTimeout = d
+
+		// ── per-stream flags (HLS output) ────────────────────────────────────
+		case arg == "-l" || arg == "--live":
+			pendingHLSLive = true
+
+		case arg == "--segment-duration":
+			v, next, err := consume(i, arg)
+			if err != nil {
+				return switchSpec{}, err
+			}
+			d, err := time.ParseDuration(v)
+			if err != nil {
+				return switchSpec{}, fmt.Errorf("--segment-duration: %w", err)
+			}
+			pendingSegmentDuration = d
+			i = next
+
+		case strings.HasPrefix(arg, "--segment-duration="):
+			d, err := time.ParseDuration(strings.TrimPrefix(arg, "--segment-duration="))
+			if err != nil {
+				return switchSpec{}, fmt.Errorf("--segment-duration: %w", err)
+			}
+			pendingSegmentDuration = d
+
+		case arg == "--playlist-size":
+			v, next, err := consume(i, arg)
+			if err != nil {
+				return switchSpec{}, err
+			}
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return switchSpec{}, fmt.Errorf("--playlist-size: %w", err)
+			}
+			pendingPlaylistSize = n
+			i = next
+
+		case strings.HasPrefix(arg, "--playlist-size="):
+			n, err := strconv.Atoi(strings.TrimPrefix(arg, "--playlist-size="))
+			if err != nil {
+				return switchSpec{}, fmt.Errorf("--playlist-size: %w", err)
+			}
+			pendingPlaylistSize = n
+
+		case arg == "--clean-interval":
+			v, next, err := consume(i, arg)
+			if err != nil {
+				return switchSpec{}, err
+			}
+			d, err := time.ParseDuration(v)
+			if err != nil {
+				return switchSpec{}, fmt.Errorf("--clean-interval: %w", err)
+			}
+			pendingCleanInterval = d
+			i = next
+
+		case strings.HasPrefix(arg, "--clean-interval="):
+			d, err := time.ParseDuration(strings.TrimPrefix(arg, "--clean-interval="))
+			if err != nil {
+				return switchSpec{}, fmt.Errorf("--clean-interval: %w", err)
+			}
+			pendingCleanInterval = d
+
+		// ── stream anchors ───────────────────────────────────────────────────
+		case arg == "-i" || arg == "--input":
+			url, next, err := consume(i, arg)
+			if err != nil {
+				return switchSpec{}, err
+			}
+			url = strings.TrimSpace(url)
+			if url == "" {
+				return switchSpec{}, fmt.Errorf("-i URL cannot be empty")
+			}
+			spec.inputs = append(spec.inputs, inputSpec{url: url})
+			resetPending()
+			i = next
+
+		case arg == "-o" || arg == "--output":
+			url, next, err := consume(i, arg)
+			if err != nil {
+				return switchSpec{}, err
+			}
+			url = strings.TrimSpace(url)
+			if url == "" {
+				return switchSpec{}, fmt.Errorf("-o URL cannot be empty")
+			}
+			cleanInterval := pendingCleanInterval
+			if cleanInterval <= 0 && pendingHLSLive {
+				cleanInterval = defaultHLSCleanInterval
+			}
+			spec.outputs = append(spec.outputs, outputSpec{
+				url:                url,
+				hlsLive:            pendingHLSLive,
+				hlsSegmentDuration: pendingSegmentDuration,
+				hlsPlaylistSize:    pendingPlaylistSize,
+				hlsCleanInterval:   cleanInterval,
+			})
+			resetPending()
+			i = next
+
+		default:
+			return switchSpec{}, fmt.Errorf("unknown argument: %q", arg)
+		}
+	}
+
+	if err := validateSwitchSpec(spec); err != nil {
+		return switchSpec{}, err
+	}
+	return spec, nil
 }
 
-func buildSwitchSpec(opts switchCommandOptions, args []string) (switchSpec, error) {
-	if opts.startupTimeout <= 0 {
-		return switchSpec{}, fmt.Errorf("--startup-timeout must be greater than zero")
+func validateSwitchSpec(spec switchSpec) error {
+	if spec.startupTimeout <= 0 {
+		return fmt.Errorf("--startup-timeout must be greater than zero")
 	}
-
-	cleanInputs := make([]string, 0, len(opts.inputs))
-	for idx, input := range opts.inputs {
-		trimmed := strings.TrimSpace(input)
-		if trimmed == "" {
-			return switchSpec{}, fmt.Errorf("--input %d cannot be empty", idx+1)
-		}
-		cleanInputs = append(cleanInputs, trimmed)
+	if len(spec.inputs) < 2 {
+		return fmt.Errorf("at least two -i inputs are required for switching")
 	}
-	if len(cleanInputs) < 2 {
-		return switchSpec{}, fmt.Errorf("at least two --input values are required for switching")
+	if len(spec.outputs) == 0 {
+		return fmt.Errorf("at least one -o output is required")
 	}
-
-	outputCandidates := make([]string, 0, len(opts.outputs)+len(args))
-	outputCandidates = append(outputCandidates, opts.outputs...)
-	outputCandidates = append(outputCandidates, args...)
-
-	cleanOutputs := make([]string, 0, len(outputCandidates))
-	for idx, output := range outputCandidates {
-		trimmed := strings.TrimSpace(output)
-		if trimmed == "" {
-			return switchSpec{}, fmt.Errorf("output %d cannot be empty", idx+1)
-		}
-		cleanOutputs = append(cleanOutputs, trimmed)
-	}
-	if len(cleanOutputs) == 0 {
-		return switchSpec{}, fmt.Errorf("at least one output URL is required")
-	}
-
-	routeID := strings.TrimSpace(opts.routeID)
-	if routeID == "" {
-		routeID = "route-1"
-	}
-
-	return switchSpec{
-		routeID:            routeID,
-		inputURLs:          cleanInputs,
-		outputURLs:         cleanOutputs,
-		startupTimeout:     opts.startupTimeout,
-		hlsLive:            opts.hlsLive,
-		hlsSegmentDuration: opts.hlsSegmentDuration,
-		hlsPlaylistSize:    opts.hlsPlaylistSize,
-		hlsCleanInterval:   opts.hlsCleanInterval,
-	}, nil
-}
-
-// switchHLSOptions returns non-nil HLS options only when the user explicitly
-// set any HLS flag. A nil return means "use auto-detection only".
-func switchHLSOptions(spec switchSpec) *streamfactory.HLSOutputOptions {
-	if !spec.hlsLive && spec.hlsSegmentDuration == 0 && spec.hlsPlaylistSize == 0 {
-		return nil
-	}
-	cleanInterval := spec.hlsCleanInterval
-	if cleanInterval <= 0 {
-		cleanInterval = defaultHLSCleanInterval
-	}
-	return &streamfactory.HLSOutputOptions{
-		IsLive:          spec.hlsLive,
-		SegmentDuration: spec.hlsSegmentDuration,
-		PlaylistSize:    spec.hlsPlaylistSize,
-		CleanInterval:   cleanInterval,
-	}
+	return nil
 }
 
 func runSwitchCommand(parent context.Context, spec switchSpec) error {
@@ -164,7 +272,7 @@ func runSwitchCommand(parent context.Context, spec switchSpec) error {
 	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	created := make([]core.Stream, 0, len(spec.inputURLs)+len(spec.outputURLs))
+	created := make([]core.Stream, 0, len(spec.inputs)+len(spec.outputs))
 	cleanup := func() {
 		for _, stream := range created {
 			if stream != nil {
@@ -174,11 +282,11 @@ func runSwitchCommand(parent context.Context, spec switchSpec) error {
 	}
 	defer cleanup()
 
-	inputStreams := make([]core.Stream, 0, len(spec.inputURLs))
-	entries := make([]switchEntry, 0, len(spec.inputURLs))
-	for idx, inputURL := range spec.inputURLs {
+	inputStreams := make([]core.Stream, 0, len(spec.inputs))
+	entries := make([]switchEntry, 0, len(spec.inputs))
+	for idx, in := range spec.inputs {
 		streamID := fmt.Sprintf("%s-in-%d", spec.routeID, idx+1)
-		stream, err := streamfactory.NewInput(streamID, inputURL)
+		stream, err := streamfactory.NewInput(streamID, in.url)
 		if err != nil {
 			return fmt.Errorf("create input %d: %w", idx+1, err)
 		}
@@ -187,20 +295,21 @@ func runSwitchCommand(parent context.Context, spec switchSpec) error {
 		entries = append(entries, switchEntry{id: streamID, name: fmt.Sprintf("Input %d", idx+1)})
 	}
 
-	hlsOpts := switchHLSOptions(spec)
-	outputStreams := make([]core.Stream, 0, len(spec.outputURLs))
-	for idx, outputURL := range spec.outputURLs {
+	outputStreams := make([]core.Stream, 0, len(spec.outputs))
+	for idx, out := range spec.outputs {
 		streamID := fmt.Sprintf("%s-out-%d", spec.routeID, idx+1)
 		var stream core.Stream
 		var err error
-		if streamfactory.IsHLSOutputPath(outputURL) {
-			opts := streamfactory.HLSOutputOptions{}
-			if hlsOpts != nil {
-				opts = *hlsOpts
+		if streamfactory.IsHLSOutputPath(out.url) {
+			opts := streamfactory.HLSOutputOptions{
+				IsLive:          out.hlsLive,
+				SegmentDuration: out.hlsSegmentDuration,
+				PlaylistSize:    out.hlsPlaylistSize,
+				CleanInterval:   out.hlsCleanInterval,
 			}
-			stream, err = streamfactory.NewHLSOutput(streamID, outputURL, opts)
+			stream, err = streamfactory.NewHLSOutput(streamID, out.url, opts)
 		} else {
-			stream, err = streamfactory.NewOutput(streamID, outputURL)
+			stream, err = streamfactory.NewOutput(streamID, out.url)
 		}
 		if err != nil {
 			return fmt.Errorf("create output %d: %w", idx+1, err)

@@ -10,6 +10,7 @@ import (
 	core "restreamer/core"
 	"restreamer/core/inputs"
 	"restreamer/core/outputs"
+	"restreamer/core/storage"
 )
 
 type streamKind string
@@ -101,12 +102,14 @@ func NewHLSOutput(id, outputPath string, opts HLSOutputOptions) (core.Stream, er
 	}
 	if opts.IsLive {
 		hlsOpts = append(hlsOpts, outputs.WithHLSLiveMode())
-		if opts.CleanInterval > 0 {
-			hlsOpts = append(hlsOpts, outputs.WithHLSCleanInterval(opts.CleanInterval))
+		cleanInterval := opts.CleanInterval
+		if cleanInterval <= 0 {
+			cleanInterval = 10 * time.Second
 		}
+		hlsOpts = append(hlsOpts, outputs.WithHLSCleanInterval(cleanInterval))
 	}
 
-	return outputs.NewHLSLiveDestination(id, dir, hlsOpts...)
+	return outputs.NewHLSLiveDestination(id, storage.NewFolder(dir), hlsOpts...)
 }
 
 // IsHLSOutputPath reports whether the given URL/path should be treated as an

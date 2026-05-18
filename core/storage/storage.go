@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -18,6 +19,10 @@ func NewLocal(cfg *config.Config) *Local {
 	return &Local{
 		rootPath: cfg.Storage.RecordingsRoot,
 	}
+}
+
+func NewFolder(path string) *Folder {
+	return &Folder{basePath: path}
 }
 
 func (l *Local) RecordingsRoot() *Folder {
@@ -82,11 +87,46 @@ func (f *Folder) RemoveAll() error {
 }
 
 func (f *Folder) StartCleaner(interval time.Duration, ttl time.Duration) error {
+	if interval <= 0 {
+		return fmt.Errorf("clean interval must be positive")
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
+			_, _ = f.Clean(time.Now().Add(-ttl), 0)
+		}
+	}()
 	return nil
 }
 
 func (f *Folder) Clean(formerThan time.Time, limit int64) (removed int64, err error) {
-	return 0, nil
+	entries, err := os.ReadDir(f.basePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().Before(formerThan) {
+			fullPath := filepath.Join(f.basePath, entry.Name())
+			if err := os.Remove(fullPath); err == nil {
+				removed++
+				if limit > 0 && removed >= limit {
+					break
+				}
+			}
+		}
+	}
+	return removed, nil
 }
 
 func (f *Folder) ObjectURL(path string) (string, error) {
