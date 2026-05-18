@@ -1,0 +1,90 @@
+RTMP_BASE_URL ?= rtmp://127.0.0.1:1938/live/
+RTMP_STREAM ?= 1
+RTMP_URL ?= $(RTMP_BASE_URL)$(RTMP_STREAM)
+RTMP_HOST ?= 127.0.0.1
+RTMP_PORT ?= 1938
+RTMP_PUBLISH_DIR ?= ./testdata/rtmp
+HLS_SERVER_URL ?= http://127.0.0.1:8090
+HLS_SERVER_PORT ?= 8090
+HLS_LIVE_URL ?= https://live-hls-web-aja-fa.getaj.net/AJA/03.m3u8
+STREAMING_READY_RETRIES ?= 20
+STREAMING_READY_DELAY ?= 2
+
+.PHONY: lines create-video streaming-infra-ready streaming-infra-up irajstreamer-all-tests
+
+create-video:
+	@echo "==> Creating test video (output.mp4)..."
+	@ffmpeg -f lavfi -i testsrc=duration=60:size=1280x720:rate=30 \
+	-vf "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf: \
+		text='%{pts\:hms}': x=10: y=10: fontsize=48: fontcolor=white: box=1: boxcolor=0x00000099" \
+	-c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p output.mp4
+	@echo "==> create-video: OK"
+
+streaming-infra-ready:
+	@echo "==> Checking streaming infra (ffmpeg, ffprobe, HLS, RTMP)..."
+	@command -v ffmpeg >/dev/null 2>&1 || (echo "==> ERROR: ffmpeg not found" && exit 1)
+	@echo "  ffmpeg: OK"
+	@command -v ffprobe >/dev/null 2>&1 || (echo "==> ERROR: ffprobe not found" && exit 1)
+	@echo "  ffprobe: OK"
+	@attempt=1; until curl -fsI $(HLS_SERVER_URL)/testdata/hls/ >/dev/null; do \
+		if [ $$attempt -ge $(STREAMING_READY_RETRIES) ]; then \
+			echo "==> ERROR: HLS server not reachable: $(HLS_SERVER_URL)"; \
+			exit 1; \
+		fi; \
+		echo "  Waiting for HLS server ($(HLS_SERVER_URL)) [$$attempt/$(STREAMING_READY_RETRIES)]..."; \
+		attempt=$$((attempt + 1)); \
+		sleep $(STREAMING_READY_DELAY); \
+	done
+	@echo "  HLS server ($(HLS_SERVER_URL)): OK"
+	@attempt=1; until ffprobe -v error -rw_timeout 5000000 -i $(RTMP_URL) >/dev/null 2>&1; do \
+		if [ $$attempt -ge $(STREAMING_READY_RETRIES) ]; then \
+			echo "==> ERROR: RTMP server not ready or stream not publishing: $(RTMP_URL)"; \
+			exit 1; \
+		fi; \
+		echo "  Waiting for RTMP stream ($(RTMP_URL)) [$$attempt/$(STREAMING_READY_RETRIES)]..."; \
+		attempt=$$((attempt + 1)); \
+		sleep $(STREAMING_READY_DELAY); \
+	done
+	@echo "  RTMP ($(RTMP_URL)): OK"
+	@echo "==> streaming-infra-ready: all checks passed"
+
+streaming-infra-up:
+	@echo "==> Bringing up streaming infra..."
+	@command -v ffmpeg >/dev/null 2>&1 || (echo "==> ERROR: ffmpeg not found" && exit 1)
+	@command -v ffprobe >/dev/null 2>&1 || (echo "==> ERROR: ffprobe not found" && exit 1)
+	@curl -fsI $(HLS_SERVER_URL)/testdata/hls/ >/dev/null || (echo "  Starting HLS server on port $(HLS_SERVER_PORT)..." && nohup python3 -m http.server $(HLS_SERVER_PORT) --directory . </dev/null >>/tmp/hls_server.log 2>&1 & sleep 2)
+	@echo "  HLS server: OK"
+	@attempt=1; until python3 -c "import socket; s=socket.create_connection(('$(RTMP_HOST)', $(RTMP_PORT)), 1); s.close()" >/dev/null 2>&1; do \
+		if [ $$attempt -ge $(STREAMING_READY_RETRIES) ]; then \
+			echo "==> ERROR: RTMP server not listening on $(RTMP_HOST):$(RTMP_PORT)"; \
+			exit 1; \
+		fi; \
+		echo "  Waiting for RTMP server ($(RTMP_HOST):$(RTMP_PORT)) [$$attempt/$(STREAMING_READY_RETRIES)]..."; \
+		attempt=$$((attempt + 1)); \
+		sleep $(STREAMING_READY_DELAY); \
+	done
+	@echo "  RTMP server ($(RTMP_HOST):$(RTMP_PORT)): OK"
+	@for f in $(RTMP_PUBLISH_DIR)/*; do \
+		if [ -f $$f ]; then \
+			stream=$$(basename $$f); \
+			stream=$${stream%.*}; \
+			echo "  Publishing RTMP stream: $$stream"; \
+			nohup ffmpeg -hide_banner -loglevel error -stream_loop -1 -re -i $$f \
+				-c:v libx264 -preset ultrafast -tune zerolatency -g 30 -x264opts keyint=30:min-keyint=30:scenecut=0 \
+				-c:a aac -f flv "$(RTMP_BASE_URL)$$stream" </dev/null >>/tmp/rtmp_publish_$$stream.log 2>&1 & \
+		fi; \
+	done
+	@echo "  Waiting for RTMP stream(s) to be ready..."
+	@sleep 4
+	@export HLS_SERVER_URL=$(HLS_SERVER_URL)
+	@echo "==> streaming-infra-up: OK"
+
+irajstreamer-all-tests: 
+	@echo "==> Running irajstreamer tests (TestAll)..."
+	CGO_CFLAGS= CGO_CPPFLAGS= CGO_CXXFLAGS= CGO_LDFLAGS= CGO_FFLAGS= \
+	HLS_SERVER_URL=$(HLS_SERVER_URL) RTMP_URL=$(RTMP_URL) HLS_LIVE_URL=$(HLS_LIVE_URL) \
+		go test ./internal/irajstreamer -run TestAll -count=1  -v -timeout 3m
+	@echo "==> irajstreamer-all-tests: OK"
+
+lines:
+	find . -name "*.go" -type f -print0 | xargs -0 wc -l
