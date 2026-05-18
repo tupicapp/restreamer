@@ -57,7 +57,15 @@ func newSegmentFactory(host segmentHost, baseUrl string) *segmentFactory {
 
 func (f *segmentFactory) newSegment(segment *playlist.MediaSegment) (Segment, error) {
 	segmentURL := resolveURL(f.baseUrl, segment.URI)
-	data, err := fetchSegmentData(f.client, segmentURL, segment.ByteRangeStart, segment.ByteRangeLength)
+	var data []byte
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		data, err = fetchSegmentData(f.client, segmentURL, segment.ByteRangeStart, segment.ByteRangeLength)
+		if err == nil {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to download segment: %w", err)
 	}

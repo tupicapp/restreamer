@@ -28,14 +28,10 @@ func NewInput(id, streamURL string) (core.Stream, error) {
 	switch detectInputKind(streamURL) {
 	case streamKindRTMP:
 		return inputs.NewRTMP(id, streamURL), nil
-	case streamKindFile:
-		stream := inputs.NewHLS(id, streamURL, inputs.OptionWithRealTime(true))
-		if stream == nil {
-			return nil, fmt.Errorf("failed to create file input for %q", streamURL)
-		}
-		return stream, nil
-	case streamKindHLSLive:
-		return inputs.NewHLSLive(id, streamURL), nil
+	case streamKindFile, streamKindHLSLive:
+		// Probe the playlist: #EXT-X-ENDLIST → VOD/file, absent → live.
+		// OptionWithRealTime applies only to the VOD path (hlsInput).
+		return inputs.NewHLSAuto(id, streamURL, inputs.OptionWithRealTime(true))
 	default:
 		return inputs.NewRTMP(id, streamURL), nil
 	}
@@ -159,6 +155,10 @@ func detectOutputKind(streamURL string) streamKind {
 	case strings.Contains(lowerURL, "http://"), strings.Contains(lowerURL, "https://"):
 		return streamKindFile
 	default:
+		// Local filesystem paths (no scheme) are treated as file outputs.
+		if !strings.Contains(lowerURL, "://") {
+			return streamKindFile
+		}
 		return streamKindRTMP
 	}
 }

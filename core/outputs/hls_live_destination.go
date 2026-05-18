@@ -104,6 +104,8 @@ type hlsLive struct {
 	hasLastAudioPTS90k bool
 	lastAudioPTS90k    int64
 
+	audioSampleRate int // detected from first audio frame; 0 means use DefaultAudioRate
+
 	hasLastVideoPTS90k bool
 	lastVideoPTS90k    int64
 	hasLastVideoDTS90k bool
@@ -431,6 +433,17 @@ func (o *hlsLive) handleAudioFrame(frame *shared.Frame) {
 		return
 	}
 
+	if frame.SampleRate > 0 && o.audioSampleRate != frame.SampleRate {
+		o.audioSampleRate = frame.SampleRate
+		if o.audioTrack != nil {
+			if mc, ok := o.audioTrack.Codec.(*mediatscodecs.MPEG4Audio); ok {
+				mc.SampleRate = frame.SampleRate
+				mc.ChannelConfig = uint8(DefaultAudioChannels)
+				mc.ChannelCount = DefaultAudioChannels
+			}
+		}
+	}
+
 	rawPTS90k := durationTo90k(frame.PTS)
 	pts90k := rawPTS90k - o.timelineBase90k
 	if pts90k < 0 {
@@ -479,6 +492,10 @@ func (o *hlsLive) openSegmentLocked(startPTS time.Duration) error {
 	}
 
 	if o.currentSegmentWriter == nil {
+		audioRate := DefaultAudioRate
+		if o.audioSampleRate > 0 {
+			audioRate = o.audioSampleRate
+		}
 		o.videoTrack = &mediats.Track{
 			Codec: &mediatscodecs.H264{},
 		}
@@ -486,7 +503,7 @@ func (o *hlsLive) openSegmentLocked(startPTS time.Duration) error {
 			Codec: &mediatscodecs.MPEG4Audio{
 				Config: mpeg4audio.Config{
 					Type:          mpeg4audio.ObjectTypeAACLC,
-					SampleRate:    DefaultAudioRate,
+					SampleRate:    audioRate,
 					ChannelConfig: uint8(DefaultAudioChannels),
 					ChannelCount:  DefaultAudioChannels,
 				},
@@ -514,10 +531,6 @@ func (o *hlsLive) openSegmentLocked(startPTS time.Duration) error {
 	}
 	o.currentSegmentFileName = fileName
 	o.segmentIndex++
-
-	if len(o.entries) == 0 {
-		return o.writePlaylistLocked(false)
-	}
 
 	return nil
 }
@@ -589,12 +602,13 @@ func (o *hlsLive) writePlaylistLocked(endList bool) error {
 	}
 	b.WriteString(fmt.Sprintf("#EXT-X-MEDIA-SEQUENCE:%d\n", mediaSeq))
 
+	prevSeq := mediaSeq - 1
 	for _, entry := range o.entries {
-		// Segment files are standalone TS files for HLS playback. Keep explicit
-		// discontinuity markers at rollovers for conservative player compatibility.
-		if entry.Seq != mediaSeq {
+		// Only mark a discontinuity when there is an actual gap in sequence numbers.
+		if entry.Seq != prevSeq+1 {
 			b.WriteString("#EXT-X-DISCONTINUITY\n")
 		}
+		prevSeq = entry.Seq
 		b.WriteString(fmt.Sprintf("#EXTINF:%.3f,\n", entry.Duration))
 		b.WriteString(o.objectURLOrPath(entry.FileName) + "\n")
 	}
@@ -612,7 +626,10 @@ func (o *hlsLive) segmentURI(fileName string) string {
 }
 
 func (o *hlsLive) objectURLOrPath(fileName string) string {
-	return shared.PreferredURL(o.pathPrefix, o.outputFolder, fileName)
+	if o.pathPrefix != "" {
+		return shared.JoinURLPrefix(o.pathPrefix, fileName)
+	}
+	return fileName
 }
 
 func (o *hlsLive) eventObjectURLOrPath(fileName string) string {

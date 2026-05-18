@@ -22,9 +22,14 @@ import (
 const (
 	MpegTSTimeScale    = 90000.0
 	MP4TimeScale       = 15360
-	SampleRate         = 44100
+	SampleRate         = 48000
 	TsAACBytePerSample = 1024
-	pendingBufferSize  = 100
+
+	// Segment-based buffering: at most maxBufferedSegments segments worth of
+	// frames are held in pendingVideoBuf/pendingAudioBuf at any time. Draining
+	// starts as soon as at least one full segment is buffered.
+	maxBufferedSegments = 2
+	minBufferedSegments = 1
 )
 
 type hlsInput struct {
@@ -58,6 +63,17 @@ type hlsInput struct {
 	pendingVideoBuf []*Frame
 	pendingAudioBuf []*Frame
 	pendingMu       sync.Mutex
+
+	// Per-segment frame counts in FIFO order. Each entry is the number of
+	// frames accumulated for that segment so far. While a segment is being
+	// read its entry is the *last* one in the slice and keeps growing; once
+	// the segment hits EOF endSegment() is called and a new slot is appended
+	// only when the next segment starts. Drainage only consumes *closed*
+	// (non-last, or last when openSegment is false) entries to avoid emitting
+	// frames out of order.
+	videoSegmentCounts []int
+	audioSegmentCounts []int
+	openSegment        bool
 
 	segmentsChan chan *playlist.MediaSegment
 
@@ -93,11 +109,11 @@ func NewHLS(id, uri string, opts ...HlsOption) Stream {
 		id:           id,
 		uri:          uri,
 		baseURL:      baseURL,
-		videoChan:    make(chan *Frame, 10),
-		audioChan:    make(chan *Frame, 10),
+		videoChan:    make(chan *Frame, 300),
+		audioChan:    make(chan *Frame, 300),
 		done:         make(chan struct{}),
 		started:      make(chan struct{}),
-		segmentsChan: make(chan *playlist.MediaSegment, 1000),
+		segmentsChan: make(chan *playlist.MediaSegment, 50),
 		segmentsMap:  make(map[string]struct{}),
 		events:       shared.NewEventEmitter(128),
 	}
@@ -126,6 +142,26 @@ func (r *hlsInput) Stop() {
 }
 func (r *hlsInput) Close() {
 	r.closeOnce.Do(func() {
+		// Mark any open segment as closed so remaining frames can be drained
+		r.endSegment()
+
+		// Wait for pending buffers to drain (with timeout to prevent hanging)
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			r.pendingMu.Lock()
+			videoDrained := len(r.pendingVideoBuf) == 0 && len(r.videoSegmentCounts) == 0
+			audioDrained := len(r.pendingAudioBuf) == 0 && len(r.audioSegmentCounts) == 0
+			r.pendingMu.Unlock()
+
+			if videoDrained && audioDrained {
+				break
+			}
+			if time.Now().After(deadline) {
+				break
+			}
+			time.Sleep(1 * time.Millisecond)
+		}
+
 		close(r.done)
 		r.events.Emit(shared.Event{Type: shared.EventTypeStreamClosed, StreamID: r.id, StreamType: r.Type(), Message: "hls reader closed"})
 		r.events.Close()
@@ -197,12 +233,20 @@ func (r *hlsInput) Start() {
 	close(r.started)
 }
 
-// enqueuePendingVideo appends a video frame to the pending buffer.
+// enqueuePendingVideo appends a video frame to the pending buffer. The frame
+// is attributed to the currently-open segment (the last entry of
+// videoSegmentCounts, opened by beginSegment).
 func (r *hlsInput) enqueuePendingVideo(frame *Frame) {
 	r.pendingMu.Lock()
 	defer r.pendingMu.Unlock()
 
 	r.pendingVideoBuf = append(r.pendingVideoBuf, frame)
+	if n := len(r.videoSegmentCounts); n > 0 && r.openSegment {
+		r.videoSegmentCounts[n-1]++
+	} else {
+		// Defensive: no open segment — treat as a one-frame closed segment.
+		r.videoSegmentCounts = append(r.videoSegmentCounts, 1)
+	}
 }
 
 // enqueuePendingAudio appends an audio frame to the pending buffer.
@@ -211,6 +255,40 @@ func (r *hlsInput) enqueuePendingAudio(frame *Frame) {
 	defer r.pendingMu.Unlock()
 
 	r.pendingAudioBuf = append(r.pendingAudioBuf, frame)
+	if n := len(r.audioSegmentCounts); n > 0 && r.openSegment {
+		r.audioSegmentCounts[n-1]++
+	} else {
+		r.audioSegmentCounts = append(r.audioSegmentCounts, 1)
+	}
+}
+
+// beginSegment opens a new segment slot in the per-stream segment-count FIFOs.
+// Frames enqueued after this call are attributed to the new segment until
+// endSegment is called.
+func (r *hlsInput) beginSegment() {
+	r.pendingMu.Lock()
+	defer r.pendingMu.Unlock()
+	r.videoSegmentCounts = append(r.videoSegmentCounts, 0)
+	r.audioSegmentCounts = append(r.audioSegmentCounts, 0)
+	r.openSegment = true
+}
+
+// endSegment marks the currently-open segment as fully read. Frames buffered
+// for it become eligible for draining.
+func (r *hlsInput) endSegment() {
+	r.pendingMu.Lock()
+	defer r.pendingMu.Unlock()
+	r.openSegment = false
+}
+
+// bufferedSegmentCount returns the total number of segments (open + closed)
+// currently held in pending buffers. Caller must hold pendingMu.
+func (r *hlsInput) bufferedSegmentCountLocked() int {
+	n := len(r.videoSegmentCounts)
+	if len(r.audioSegmentCounts) > n {
+		n = len(r.audioSegmentCounts)
+	}
+	return n
 }
 
 func (r *hlsInput) streamID() string {
@@ -230,7 +308,9 @@ func (r *hlsInput) incTotalAudioFrames() {
 }
 
 func (r *hlsInput) playListUpdater() {
-	ticker := time.NewTicker(2 * time.Second)
+	// Poll frequently so we pick up new segments quickly. For a 2-second
+	// segment duration, 300ms keeps the inter-segment gap under one frame.
+	ticker := time.NewTicker(300 * time.Millisecond)
 	defer ticker.Stop()
 
 	err := r.updateMediaPlaylist()
@@ -251,90 +331,134 @@ func (r *hlsInput) playListUpdater() {
 	}
 }
 
-// popSortedHalfVideo sorts pending video frames by PTS and returns the first half, removing them from the buffer.
-func (r *hlsInput) popSortedVideo(sortSize, readSize int) []*Frame {
+// popReadyVideo returns the frames belonging to the front (oldest) *closed*
+// segment, sorted by DTS. Returns nil while the only buffered segment is still
+// open (frames may still be appended to it).
+func (r *hlsInput) popReadyVideo() []*Frame {
 	r.pendingMu.Lock()
 	defer r.pendingMu.Unlock()
 
-	if len(r.pendingVideoBuf) < sortSize {
+	closed := len(r.videoSegmentCounts)
+	if r.openSegment && closed > 0 {
+		closed--
+	}
+
+	if closed == 0 {
 		return nil
 	}
 
-	if readSize > sortSize {
-		readSize = sortSize
+	// Skip empty closed segments so they don't block draining.
+	// A segment is closed if it's not the last one, or it's the last one and openSegment=false.
+	for len(r.videoSegmentCounts) > 0 && r.videoSegmentCounts[0] == 0 {
+		isLastSegment := len(r.videoSegmentCounts) == 1
+		isLastSegmentClosed := !r.openSegment
+
+		if isLastSegment && isLastSegmentClosed {
+			// Last segment is closed and empty, safe to skip
+			r.videoSegmentCounts = r.videoSegmentCounts[1:]
+		} else if !isLastSegment {
+			// Not last segment, so it's closed and empty, safe to skip
+			r.videoSegmentCounts = r.videoSegmentCounts[1:]
+		} else {
+			// Last segment is open and empty, can't skip (frames might still arrive)
+			return nil
+		}
 	}
 
-	sort.Slice(r.pendingVideoBuf, func(i, j int) bool {
-		return r.pendingVideoBuf[i].DTS < r.pendingVideoBuf[j].DTS
-	})
+	if len(r.videoSegmentCounts) == 0 {
+		return nil
+	}
 
-	batch := make([]*Frame, readSize)
-	copy(batch, r.pendingVideoBuf[:readSize])
+	n := r.videoSegmentCounts[0]
+	if n > len(r.pendingVideoBuf) {
+		return nil
+	}
 
-	remaining := make([]*Frame, len(r.pendingVideoBuf)-readSize)
-	copy(remaining, r.pendingVideoBuf[readSize:])
+	batch := make([]*Frame, n)
+	copy(batch, r.pendingVideoBuf[:n])
+	sort.Slice(batch, func(i, j int) bool { return batch[i].DTS < batch[j].DTS })
+
+	remaining := make([]*Frame, len(r.pendingVideoBuf)-n)
+	copy(remaining, r.pendingVideoBuf[n:])
 	r.pendingVideoBuf = remaining
+	r.videoSegmentCounts = r.videoSegmentCounts[1:]
 
 	return batch
 }
 
-// popSortedHalfAudio sorts pending audio frames by PTS and returns the first half, removing them from the buffer.
-func (r *hlsInput) popSortedAudio(sortSize, readSize int) []*Frame {
+// popReadyAudio mirrors popReadyVideo for the audio buffer.
+func (r *hlsInput) popReadyAudio() []*Frame {
 	r.pendingMu.Lock()
 	defer r.pendingMu.Unlock()
 
-	if len(r.pendingAudioBuf) < sortSize {
+	closed := len(r.audioSegmentCounts)
+	if r.openSegment && closed > 0 {
+		closed--
+	}
+
+	if closed == 0 {
 		return nil
 	}
 
-	if readSize > sortSize {
-		readSize = sortSize
+	// Skip empty closed segments so they don't block draining.
+	// A segment is closed if it's not the last one, or it's the last one and openSegment=false.
+	for len(r.audioSegmentCounts) > 0 && r.audioSegmentCounts[0] == 0 {
+		isLastSegment := len(r.audioSegmentCounts) == 1
+		isLastSegmentClosed := !r.openSegment
+
+		if isLastSegment && isLastSegmentClosed {
+			// Last segment is closed and empty, safe to skip
+			r.audioSegmentCounts = r.audioSegmentCounts[1:]
+		} else if !isLastSegment {
+			// Not last segment, so it's closed and empty, safe to skip
+			r.audioSegmentCounts = r.audioSegmentCounts[1:]
+		} else {
+			// Last segment is open and empty, can't skip (frames might still arrive)
+			return nil
+		}
 	}
 
-	sort.Slice(r.pendingAudioBuf, func(i, j int) bool {
-		return r.pendingAudioBuf[i].DTS < r.pendingAudioBuf[j].DTS
-	})
+	if len(r.audioSegmentCounts) == 0 {
+		return nil
+	}
 
-	batch := make([]*Frame, readSize)
-	copy(batch, r.pendingAudioBuf[:readSize])
+	n := r.audioSegmentCounts[0]
+	if n > len(r.pendingAudioBuf) {
+		return nil
+	}
 
-	remaining := make([]*Frame, len(r.pendingAudioBuf)-readSize)
-	copy(remaining, r.pendingAudioBuf[readSize:])
+	batch := make([]*Frame, n)
+	copy(batch, r.pendingAudioBuf[:n])
+	sort.Slice(batch, func(i, j int) bool { return batch[i].DTS < batch[j].DTS })
+
+	remaining := make([]*Frame, len(r.pendingAudioBuf)-n)
+	copy(remaining, r.pendingAudioBuf[n:])
 	r.pendingAudioBuf = remaining
+	r.audioSegmentCounts = r.audioSegmentCounts[1:]
 
 	return batch
 }
 
+// pendingBacklogExceeded blocks the segment fetcher when we already hold
+// maxBufferedSegments segments worth of frames on either stream.
 func (r *hlsInput) pendingBacklogExceeded() bool {
 	r.pendingMu.Lock()
 	defer r.pendingMu.Unlock()
 
-	videoOver := len(r.pendingVideoBuf) >= pendingBufferSize
-	audioOver := len(r.pendingAudioBuf) >= pendingBufferSize
-	return videoOver || audioOver
+	return r.bufferedSegmentCountLocked() >= maxBufferedSegments
 }
 
 func (r *hlsInput) drainAndForwardVideo() {
-	lastForwardVideo := time.Now()
-
 	for {
-
 		select {
 		case <-r.done:
 			return
 		default:
 		}
-		videoSortSize := 100
-		videoReadSize := 20
 
-		if time.Since(lastForwardVideo) > 1000*time.Millisecond {
-			videoSortSize = len(r.pendingVideoBuf)
-			videoReadSize = len(r.pendingVideoBuf)
-		}
-
-		videoBuffer := r.popSortedVideo(videoSortSize, videoReadSize)
+		videoBuffer := r.popReadyVideo()
 		if len(videoBuffer) == 0 {
-			runtime.Gosched()
+			time.Sleep(5 * time.Millisecond)
 			continue
 		}
 
@@ -344,31 +468,22 @@ func (r *hlsInput) drainAndForwardVideo() {
 				if r.realTime {
 					time.Sleep(frame.Duration)
 				}
+			case <-r.done:
+				return
 			}
 		}
-
-		lastForwardVideo = time.Now()
 	}
 }
 
 func (r *hlsInput) drainAndForwardAudio() {
-	lastForwardAudio := time.Now()
 	for {
-
 		select {
 		case <-r.done:
 			return
 		default:
 		}
-		audioSortSize := 100
-		audioReadSize := 20
 
-		if time.Since(lastForwardAudio) > 1000*time.Millisecond {
-			audioSortSize = len(r.pendingAudioBuf)
-			audioReadSize = len(r.pendingAudioBuf)
-		}
-
-		audioBuffer := r.popSortedAudio(audioSortSize, audioReadSize)
+		audioBuffer := r.popReadyAudio()
 		if len(audioBuffer) == 0 {
 			runtime.Gosched()
 			continue
@@ -380,10 +495,10 @@ func (r *hlsInput) drainAndForwardAudio() {
 				if r.realTime {
 					time.Sleep(frame.Duration)
 				}
+			case <-r.done:
+				return
 			}
 		}
-
-		lastForwardAudio = time.Now()
 	}
 }
 
@@ -443,7 +558,10 @@ func (r *hlsInput) updateMediaPlaylist() error {
 			select {
 			case r.segmentsChan <- segment:
 				logger.Debug("hls reader: pushing segment", zap.String("uri", segment.URI))
+			case <-r.done:
+				return nil
 			default:
+				logger.Warn("hls reader: segment queue full, dropping segment", zap.String("uri", segment.URI))
 			}
 		}
 	}
@@ -483,6 +601,7 @@ func (r *hlsInput) run() {
 						time.Sleep(time.Millisecond * 5)
 						continue
 					}
+					r.beginSegment()
 				default:
 					time.Sleep(5 * time.Millisecond)
 					continue
@@ -491,13 +610,13 @@ func (r *hlsInput) run() {
 
 			err = reader.Read()
 			if err == io.EOF {
-				logger.Debug("hls reader: error : ", zap.String("stream_id", r.id), zap.Error(err))
+				r.endSegment()
 				reader = nil
 				continue
 			}
 
 			if err != nil {
-				logger.Debug("hls reader: error : ", zap.String("stream_id", r.id), zap.Error(err))
+				logger.Debug("hls reader: read error", zap.String("stream_id", r.id), zap.Error(err))
 			}
 
 			r.LastIO = time.Now()

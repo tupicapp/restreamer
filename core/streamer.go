@@ -443,6 +443,8 @@ l1:
 				continue l1
 			}
 
+			fmt.Println("audio frame : ", audioFrame.PTS, audioFrame.SequenceID)
+
 			s.TotalAudioFrames++
 		case <-time.After(5 * time.Millisecond):
 			continue
@@ -487,6 +489,8 @@ l1:
 			if !ok || videoframe == nil {
 				continue l1
 			}
+
+			fmt.Println("video frame : ", videoframe.PTS, videoframe.SequenceID, videoframe.PacketType)
 
 			s.TotalVideoFrames++
 		case <-time.After(5 * time.Millisecond):

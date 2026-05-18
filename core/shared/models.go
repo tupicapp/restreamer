@@ -164,6 +164,7 @@ type Frame struct {
 	SequenceID int64
 	GOPID      int64
 	IsFile     bool
+	SampleRate int // audio sample rate in Hz, 0 if unknown
 }
 
 type State struct {

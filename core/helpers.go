@@ -28,7 +28,7 @@ const (
 	// Audio
 	DefaultAudioChannels = 2           // Stereo
 	DefaultAudioProfile  = 2           // 48 kHz, broadcast standard
-	DefaultAudioRate     = 44100       // 48 kHz, broadcast standard
+	DefaultAudioRate     = 48000       // 48 kHz, broadcast standard
 	DefaultAudioFormat   = "s16le"     // PCM
 	DefaultAudioCodec    = "aac"       // PCM
 	DefaultPreset        = "ultrafast" // PCM

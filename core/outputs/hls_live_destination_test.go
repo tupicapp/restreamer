@@ -860,8 +860,8 @@ func TestHLSFileDestination_PlaylistTargetDurationReflectsSegments(t *testing.T)
 		t.Fatalf("expected target duration 17, got %d", target)
 	}
 
-	if !strings.Contains(string(data), "#EXT-X-DISCONTINUITY") {
-		t.Fatalf("expected discontinuity tags between standalone TS segments")
+	if strings.Contains(string(data), "#EXT-X-DISCONTINUITY") {
+		t.Fatalf("contiguous segments (seq 5,6) must NOT have #EXT-X-DISCONTINUITY")
 	}
 	wantFirst := "/v1/restream/hls/channel-a/program-a/seg_000005.ts"
 	wantSecond := "/v1/restream/hls/channel-a/program-a/seg_000006.ts"
@@ -870,6 +870,60 @@ func TestHLSFileDestination_PlaylistTargetDurationReflectsSegments(t *testing.T)
 	}
 	if !strings.Contains(string(data), wantSecond) {
 		t.Fatalf("expected storage-backed segment URI %q, got: %s", wantSecond, string(data))
+	}
+}
+
+func TestWritePlaylistLocked_DiscontinuityOnlyOnGap(t *testing.T) {
+	outDir := t.TempDir()
+	outFolderRaw := storage.NewLocal(&config.Config{
+		Storage: config.Storage{RecordingsRoot: outDir},
+	}).RecordingsRoot()
+	outFolder, err := shared.AdaptFolder(outFolderRaw)
+	if err != nil {
+		t.Fatalf("AdaptFolder failed: %v", err)
+	}
+
+	contiguous := &hlsLive{
+		url:            outDir,
+		outputFolder:   outFolder,
+		targetDuration: 2,
+		entries: []hlsSegmentEntry{
+			{Seq: 3, FileName: "seg_000003.ts", Duration: 2.0},
+			{Seq: 4, FileName: "seg_000004.ts", Duration: 2.0},
+			{Seq: 5, FileName: "seg_000005.ts", Duration: 2.0},
+		},
+	}
+	if err := contiguous.writePlaylistLocked(false); err != nil {
+		t.Fatalf("writePlaylistLocked: %v", err)
+	}
+	data, _ := os.ReadFile(filepath.Join(outDir, "stream.m3u8"))
+	if strings.Contains(string(data), "#EXT-X-DISCONTINUITY") {
+		t.Fatal("contiguous segments must not have #EXT-X-DISCONTINUITY")
+	}
+
+	outDir2 := t.TempDir()
+	outFolderRaw2 := storage.NewLocal(&config.Config{
+		Storage: config.Storage{RecordingsRoot: outDir2},
+	}).RecordingsRoot()
+	outFolder2, err := shared.AdaptFolder(outFolderRaw2)
+	if err != nil {
+		t.Fatalf("AdaptFolder failed: %v", err)
+	}
+	gapped := &hlsLive{
+		url:            outDir2,
+		outputFolder:   outFolder2,
+		targetDuration: 2,
+		entries: []hlsSegmentEntry{
+			{Seq: 3, FileName: "seg_000003.ts", Duration: 2.0},
+			{Seq: 5, FileName: "seg_000005.ts", Duration: 2.0},
+		},
+	}
+	if err := gapped.writePlaylistLocked(false); err != nil {
+		t.Fatalf("writePlaylistLocked: %v", err)
+	}
+	data2, _ := os.ReadFile(filepath.Join(outDir2, "stream.m3u8"))
+	if !strings.Contains(string(data2), "#EXT-X-DISCONTINUITY") {
+		t.Fatal("gapped segments (seq 3,5) must have #EXT-X-DISCONTINUITY")
 	}
 }
 

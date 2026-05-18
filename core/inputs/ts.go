@@ -78,6 +78,8 @@ func NewMpegTs(data []byte, host segmentHost, state *segmentState) (Segment, err
 				adjustedPts := time.Duration(pts) * time.Second / MpegTSTimeScale
 				adjustedDts := time.Duration(dts) * time.Second / MpegTSTimeScale
 
+				tsReader.host.incTotalVideoFrames()
+
 				tsReader.bufferVideoPacket(adjustedPts, adjustedDts, au, "h264")
 				return nil
 			})
@@ -111,13 +113,17 @@ func NewMpegTs(data []byte, host segmentHost, state *segmentState) (Segment, err
 	if audioTrack != nil {
 		switch audioTrack.Codec.(type) {
 		case *codecs.MPEG4Audio:
+			actualSampleRate := SampleRate
+			if mc, ok := audioTrack.Codec.(*codecs.MPEG4Audio); ok && mc.SampleRate > 0 {
+				actualSampleRate = mc.SampleRate
+			}
 			reader.OnDataMPEG4Audio(audioTrack, func(pts int64, aus [][]byte) error {
 				ptsBase := time.Duration(pts) * time.Second / MpegTSTimeScale
-				frameDur := time.Second * TsAACBytePerSample / SampleRate
+				frameDur := time.Second * TsAACBytePerSample / time.Duration(actualSampleRate)
 
 				for i, au := range aus {
 					framePTS := ptsBase + time.Duration(i)*frameDur
-					tsReader.bufferAudioPacket(framePTS, [][]byte{cloneBytes(au)}, "aac")
+					tsReader.bufferAudioPacket(framePTS, [][]byte{cloneBytes(au)}, "aac", actualSampleRate)
 				}
 
 				return nil
@@ -130,7 +136,7 @@ func NewMpegTs(data []byte, host segmentHost, state *segmentState) (Segment, err
 
 				for i, au := range packets {
 					framePTS := ptsBase + time.Duration(i)*frameDur
-					tsReader.bufferAudioPacket(framePTS, [][]byte{cloneBytes(au)}, "opus")
+					tsReader.bufferAudioPacket(framePTS, [][]byte{cloneBytes(au)}, "opus", 0)
 				}
 
 				return nil
@@ -142,7 +148,7 @@ func NewMpegTs(data []byte, host segmentHost, state *segmentState) (Segment, err
 
 				for i, au := range frames {
 					framePTS := ptsBase + time.Duration(i)*frameDur
-					tsReader.bufferAudioPacket(framePTS, [][]byte{cloneBytes(au)}, "mpeg1Audio")
+					tsReader.bufferAudioPacket(framePTS, [][]byte{cloneBytes(au)}, "mpeg1Audio", 0)
 				}
 
 				return nil
@@ -151,7 +157,7 @@ func NewMpegTs(data []byte, host segmentHost, state *segmentState) (Segment, err
 			reader.OnDataAC3(audioTrack, func(pts int64, frame []byte) error {
 				ptsBase := time.Duration(pts) * time.Second / MpegTSTimeScale
 
-				tsReader.bufferAudioPacket(ptsBase, [][]byte{cloneBytes(frame)}, "ac3")
+				tsReader.bufferAudioPacket(ptsBase, [][]byte{cloneBytes(frame)}, "ac3", 0)
 
 				return nil
 			})
@@ -211,10 +217,9 @@ func (r *mpegtsSegment) bufferVideoPacket(pts, dts time.Duration, au [][]byte, c
 
 	// Always append to pending buffer to preserve order; no drops
 	r.host.enqueuePendingVideo(frame)
-	r.host.incTotalVideoFrames()
 }
 
-func (r *mpegtsSegment) bufferAudioPacket(pts time.Duration, payload [][]byte, codec string) {
+func (r *mpegtsSegment) bufferAudioPacket(pts time.Duration, payload [][]byte, codec string, sampleRate int) {
 	r.state.sequenceIDMu.Lock()
 	sequenceID := r.state.AudioSequenceID + 1
 	r.state.AudioSequenceID = sequenceID
@@ -245,6 +250,7 @@ func (r *mpegtsSegment) bufferAudioPacket(pts time.Duration, payload [][]byte, c
 		SequenceID: sequenceID,
 		Duration:   duration,
 		IsFile:     true,
+		SampleRate: sampleRate,
 	}
 
 	r.state.lastAudioPTS = pts

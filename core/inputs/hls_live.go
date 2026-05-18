@@ -1,83 +1,65 @@
 package inputs
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"io"
-	"net/url"
-	"os"
-	"os/exec"
-	"strconv"
-	"strings"
 	"sync"
-	"syscall"
 	"time"
 
+	gohlslib "github.com/bluenviron/gohlslib/v2"
+	ghlcodecs "github.com/bluenviron/gohlslib/v2/pkg/codecs"
 	shared "restreamer/core/shared"
 
 	"go.uber.org/zap"
 )
 
-const (
-	defaultFFmpegRTMPURL = "rtmp://127.0.0.1:1938/live/"
-	defaultFpsThreshold  = int64(15)
-)
-
 type hlsInputLive struct {
-	id              string
-	uri             string
-	baseURL         *url.URL
-	IsInitiated     bool
-	closeOnce       sync.Once
-	startedOnce     sync.Once
-	started         chan struct{}
-	done            chan struct{}
-	isStarted       bool
-	ffmpegCmd       *exec.Cmd
-	ffmpegURL       string
-	rtmpInputStream Stream
-	lastIO          time.Time
-	ffmpegErr       io.ReadCloser
-	fpsThreshold    int64
-	events          *shared.EventEmitter
+	id  string
+	uri string
+
+	videoChan chan *Frame
+	audioChan chan *Frame
+
+	done      chan struct{}
+	started   chan struct{}
+	closeOnce sync.Once
+	startOnce sync.Once
+	signalOnce sync.Once
+
+	mu             sync.Mutex
+	isStarted      bool
+	isInitiated    bool
+	lastIO         time.Time
+	videoSeqID     int64
+	audioSeqID     int64
+	lastVideoGOPID int64
+	lastVideoPTS   time.Duration
+	lastAudioPTS   time.Duration
+
+	events *shared.EventEmitter
 }
 
-// NewHLS returns a Stream implementation that reads from an HLS playlist.
+// NewHLSLive returns a Stream that reads a live HLS playlist using gohlslib.Client.
+// No FFmpeg or external RTMP server is required.
 func NewHLSLive(id, uri string) Stream {
-	ffmpegRTMPURL := strings.TrimSpace(os.Getenv("HLS_READER_LIVE_FFMPEG_RTMP_URL"))
-	if ffmpegRTMPURL == "" {
-		ffmpegRTMPURL = defaultFFmpegRTMPURL
+	return &hlsInputLive{
+		id:        id,
+		uri:       uri,
+		videoChan: make(chan *Frame, 300),
+		audioChan: make(chan *Frame, 300),
+		done:      make(chan struct{}),
+		started:   make(chan struct{}),
+		events:    shared.NewEventEmitter(128),
 	}
-
-	fpsThreshold := defaultFpsThreshold
-	if raw := strings.TrimSpace(os.Getenv("HLS_READER_LIVE_FPS_HEALTH_THRESHOLD")); raw != "" {
-		if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil && parsed > 0 {
-			fpsThreshold = parsed
-		}
-	}
-
-	rtmpInputStream := Manage(NewRTMP(id, ffmpegRTMPURL+id))
-	h := &hlsInputLive{
-		id:              id,
-		uri:             uri,
-		done:            make(chan struct{}),
-		started:         make(chan struct{}),
-		ffmpegURL:       ffmpegRTMPURL + id,
-		rtmpInputStream: rtmpInputStream,
-		fpsThreshold:    fpsThreshold,
-		events:          shared.NewEventEmitter(128),
-	}
-
-	return h
 }
 
-func (r *hlsInputLive) GetVideoChan() chan *Frame      { return r.rtmpInputStream.GetVideoChan() }
-func (r *hlsInputLive) GetAudioChan() chan *Frame      { return r.rtmpInputStream.GetAudioChan() }
-func (r *hlsInputLive) GetID() string                  { return r.rtmpInputStream.GetID() }
+func (r *hlsInputLive) GetVideoChan() chan *Frame      { return r.videoChan }
+func (r *hlsInputLive) GetAudioChan() chan *Frame      { return r.audioChan }
+func (r *hlsInputLive) GetID() string                  { return r.id }
 func (r *hlsInputLive) Type() string                   { return "hlslive" }
-func (r *hlsInputLive) IsRestartable() bool            { return r.rtmpInputStream.IsRestartable() }
-func (b *hlsInputLive) RestartInterval() time.Duration { return 30 * time.Second }
+func (r *hlsInputLive) IsRestartable() bool            { return false }
+func (r *hlsInputLive) RestartInterval() time.Duration { return 30 * time.Second }
+
 func (r *hlsInputLive) EventChan() chan shared.Event {
 	if r.events == nil {
 		return nil
@@ -85,36 +67,12 @@ func (r *hlsInputLive) EventChan() chan shared.Event {
 	return r.events.Chan()
 }
 
-func (r *hlsInputLive) Stop() {
-	select {
-	case <-r.done:
-		return
-	default:
-	}
-	r.isStarted = false
-	r.rtmpInputStream.Stop()
-	if r.events == nil {
-		return
-	}
-	r.events.Emit(shared.Event{Type: shared.EventTypeStreamStopped, StreamID: r.id, StreamType: r.Type(), Message: "hls live reader stopped"})
-}
-
-func (r *hlsInputLive) Close() {
-	r.closeOnce.Do(func() {
-		close(r.done)
-		r.events.Emit(shared.Event{Type: shared.EventTypeStreamClosed, StreamID: r.id, StreamType: r.Type(), Message: "hls live reader closed"})
-		r.events.Close()
-	})
-
-	r.rtmpInputStream.Close()
-	r.Stop()
-	r.stopFFmpegPipeline()
-}
-
 func (r *hlsInputLive) State() *State {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	return &State{
 		LastIO:      r.lastIO,
-		IsResumable: r.IsInitiated,
+		IsResumable: r.isInitiated,
 		IsStarted:   r.isStarted,
 		StreamID:    r.id,
 		Url:         r.uri,
@@ -127,197 +85,281 @@ func (r *hlsInputLive) Clone() (Stream, error) {
 }
 
 func (r *hlsInputLive) WaitForStart(ctx context.Context) error {
-	for {
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("context cancelled")
-		case <-r.done:
-			return fmt.Errorf("hls reader live is closed")
-		default:
-			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-			err := r.rtmpInputStream.WaitForStart(ctx)
-			if err == nil {
-				r.lastIO = time.Now()
-				cancel()
-				return nil
-			}
-
-			cancel()
-		}
+	select {
+	case <-r.started:
+		return nil
+	case <-r.done:
+		return fmt.Errorf("stream is closed")
+	case <-ctx.Done():
+		return fmt.Errorf("context cancelled")
 	}
+}
+
+func (r *hlsInputLive) Stop() {
+	r.mu.Lock()
+	r.isStarted = false
+	r.mu.Unlock()
+	if r.events != nil {
+		r.events.Emit(shared.Event{
+			Type:       shared.EventTypeStreamStopped,
+			StreamID:   r.id,
+			StreamType: r.Type(),
+			Message:    "hls live reader stopped",
+		})
+	}
+}
+
+func (r *hlsInputLive) Close() {
+	r.closeOnce.Do(func() {
+		close(r.done)
+		if r.events != nil {
+			r.events.Emit(shared.Event{
+				Type:       shared.EventTypeStreamClosed,
+				StreamID:   r.id,
+				StreamType: r.Type(),
+				Message:    "hls live reader closed",
+			})
+			r.events.Close()
+		}
+	})
 }
 
 func (r *hlsInputLive) Start() {
-	r.rtmpInputStream.Start()
-	r.isStarted = true
-	if r.IsInitiated {
-		r.events.Emit(shared.Event{Type: shared.EventTypeStreamStarted, StreamID: r.id, StreamType: r.Type(), Message: "hls live reader resumed", Meta: shared.StreamLifecycleMeta{URL: r.uri, Restartable: r.IsRestartable()}})
-		return
+	r.startOnce.Do(func() {
+		r.mu.Lock()
+		r.isStarted = true
+		r.isInitiated = true
+		r.mu.Unlock()
+
+		if r.events != nil {
+			r.events.Emit(shared.Event{
+				Type:       shared.EventTypeStreamStarted,
+				StreamID:   r.id,
+				StreamType: r.Type(),
+				Message:    "hls live reader starting",
+				Meta:       shared.StreamLifecycleMeta{URL: r.uri, Restartable: false},
+			})
+		}
+
+		go r.run()
+	})
+}
+
+func (r *hlsInputLive) run() {
+	for {
+		select {
+		case <-r.done:
+			return
+		default:
+		}
+
+		if err := r.runClient(); err != nil {
+			getLogger().Error("hls live: client error, retrying",
+				zap.String("stream_id", r.id),
+				zap.Error(err))
+		}
+
+		select {
+		case <-r.done:
+			return
+		case <-time.After(3 * time.Second):
+		}
+	}
+}
+
+func (r *hlsInputLive) runClient() error {
+	var c *gohlslib.Client
+	c = &gohlslib.Client{
+		URI: r.uri,
+		OnTracks: func(tracks []*gohlslib.Track) error {
+			for _, track := range tracks {
+				track := track
+				switch track.Codec.(type) {
+				case *ghlcodecs.H264:
+					c.OnDataH26x(track, func(pts, dts int64, au [][]byte) {
+						r.onVideoFrame(pts, dts, au, "h264", track.ClockRate)
+					})
+					getLogger().Info("hls live: found H264 track",
+						zap.String("stream_id", r.id),
+						zap.Int("clock_rate", track.ClockRate))
+
+				case *ghlcodecs.H265:
+					c.OnDataH26x(track, func(pts, dts int64, au [][]byte) {
+						r.onVideoFrame(pts, dts, au, "h265", track.ClockRate)
+					})
+					getLogger().Info("hls live: found H265 track",
+						zap.String("stream_id", r.id),
+						zap.Int("clock_rate", track.ClockRate))
+
+				case *ghlcodecs.MPEG4Audio:
+					aacCodec := track.Codec.(*ghlcodecs.MPEG4Audio)
+					actualSampleRate := aacCodec.Config.SampleRate
+					if actualSampleRate <= 0 {
+						actualSampleRate = 44100
+					}
+					sr := actualSampleRate
+					c.OnDataMPEG4Audio(track, func(pts int64, aus [][]byte) {
+						r.onAudioFrames(pts, aus, "aac", track.ClockRate, sr)
+					})
+					getLogger().Info("hls live: found MPEG4Audio track",
+						zap.String("stream_id", r.id),
+						zap.Int("clock_rate", track.ClockRate),
+						zap.Int("sample_rate", sr))
+
+				case *ghlcodecs.Opus:
+					c.OnDataOpus(track, func(pts int64, packets [][]byte) {
+						r.onAudioFrames(pts, packets, "opus", track.ClockRate, track.ClockRate)
+					})
+					getLogger().Info("hls live: found Opus track",
+						zap.String("stream_id", r.id),
+						zap.Int("clock_rate", track.ClockRate))
+				}
+			}
+			return nil
+		},
+		OnDownloadPrimaryPlaylist: func(u string) {
+			getLogger().Debug("hls live: downloading primary playlist",
+				zap.String("stream_id", r.id), zap.String("url", u))
+		},
+		OnDownloadStreamPlaylist: func(u string) {
+			getLogger().Debug("hls live: downloading stream playlist",
+				zap.String("stream_id", r.id), zap.String("url", u))
+		},
+		OnDownloadSegment: func(u string) {
+			getLogger().Debug("hls live: downloading segment",
+				zap.String("stream_id", r.id), zap.String("url", u))
+		},
+		OnDecodeError: func(err error) {
+			getLogger().Warn("hls live: decode error",
+				zap.String("stream_id", r.id), zap.Error(err))
+		},
 	}
 
+	if err := c.Start(); err != nil {
+		return fmt.Errorf("start gohlslib client: %w", err)
+	}
+
+	waitErr := make(chan error, 1)
+	go func() {
+		waitErr <- c.Wait2()
+	}()
+
+	select {
+	case err := <-waitErr:
+		c.Close()
+		return err
+	case <-r.done:
+		c.Close()
+		<-waitErr
+		return nil
+	}
+}
+
+func (r *hlsInputLive) onVideoFrame(pts, dts int64, au [][]byte, codec string, clockRate int) {
+	ptsD := time.Duration(pts) * time.Second / time.Duration(clockRate)
+	dtsD := time.Duration(dts) * time.Second / time.Duration(clockRate)
+
+	r.mu.Lock()
+	r.videoSeqID++
+	seqID := r.videoSeqID
+	prevPTS := r.lastVideoPTS
+	r.lastVideoPTS = ptsD
 	r.lastIO = time.Now()
-	if err := r.startFFmpegPipeline(); err != nil {
-		r.isStarted = false
-		getLogger().Error("hls reader live: failed to start ffmpeg pipeline", zap.String("stream_id", r.id), zap.Error(err))
-		r.events.Emit(shared.Event{Type: shared.EventTypeStreamError, StreamID: r.id, StreamType: r.Type(), Message: "failed to start hls live ffmpeg pipeline", Error: err})
-		return
+	r.mu.Unlock()
+
+	duration := time.Duration(0)
+	if prevPTS != 0 && ptsD >= prevPTS {
+		duration = ptsD - prevPTS
 	}
 
-	err := r.startLogger()
-	if err != nil {
-		r.isStarted = false
-		getLogger().Error("hls reader live: failed to start stderr logger", zap.String("stream_id", r.id), zap.Error(err))
-		r.events.Emit(shared.Event{Type: shared.EventTypeStreamError, StreamID: r.id, StreamType: r.Type(), Message: "failed to start hls live stderr logger", Error: err})
-		return
+	frame := &Frame{
+		PTS:        ptsD,
+		DTS:        dtsD,
+		Payload:    au,
+		Codec:      codec,
+		PacketType: classifyVideoPacketType(au, codec),
+		Timestamp:  time.Now(),
+		InputID:    r.id,
+		SequenceID: seqID,
+		Duration:   duration,
+	}
+	frame.IsKeyFrame = IsTsKeyFrame(frame)
+
+	if frame.IsKeyFrame {
+		r.mu.Lock()
+		r.lastVideoGOPID = seqID
+		r.mu.Unlock()
 	}
 
-	getLogger().Debug("hls reader: started", zap.String("stream_id", r.id), zap.String("uri", r.uri))
-	r.events.Emit(shared.Event{Type: shared.EventTypeStreamStarted, StreamID: r.id, StreamType: r.Type(), Message: "hls live reader started", Meta: shared.StreamLifecycleMeta{URL: r.uri, Restartable: r.IsRestartable()}})
+	r.mu.Lock()
+	frame.GOPID = r.lastVideoGOPID
+	r.mu.Unlock()
 
-	r.IsInitiated = true
+	r.signalStarted()
+
+	select {
+	case r.videoChan <- frame:
+	case <-r.done:
+	default:
+		getLogger().Warn("hls live: dropped video frame (channel full)",
+			zap.String("stream_id", r.id),
+			zap.Int64("seq", seqID))
+	}
 }
 
-func (r *hlsInputLive) startFFmpegPipeline() error {
-	cmd := exec.Command("ffmpeg",
-		"-nostdin",
+func (r *hlsInputLive) onAudioFrames(pts int64, payloads [][]byte, codec string, clockRate int, sampleRate int) {
+	ptsBase := time.Duration(pts) * time.Second / time.Duration(clockRate)
+	frameDur := time.Second * TsAACBytePerSample / time.Duration(sampleRate)
 
-		// INPUT PROBING (avoid missing codec params)
-		"-analyzeduration", "10000000",
-		"-probesize", "10000000",
+	for i, payload := range payloads {
+		framePTS := ptsBase + time.Duration(i)*frameDur
 
-		"-fflags", "+nobuffer",
-		"-flags", "low_delay",
+		r.mu.Lock()
+		r.audioSeqID++
+		seqID := r.audioSeqID
+		prevPTS := r.lastAudioPTS
+		r.lastAudioPTS = framePTS
+		r.lastIO = time.Now()
+		r.mu.Unlock()
 
-		"-re",
-		"-i", r.uri,
-
-		"-fflags", "+genpts",
-
-		// VIDEO
-		"-c:v", "libx264",
-		"-preset", "veryfast",
-		"-tune", "zerolatency",
-		"-x264-params", "bf=0:keyint=20:min-keyint=20:scenecut=0:repeat-headers=1",
-		"-pix_fmt", "yuv420p",
-
-		// AUDIO
-		"-c:a", "aac",
-		"-ar", "44100",
-		"-ac", "2",
-
-		// OUTPUT STABILITY (FLV / RTMP)
-		"-max_interleave_delta", "0",
-		"-muxdelay", "0",
-
-		"-f", "flv",
-		r.ffmpegURL,
-	)
-
-	cmd.Stdout = os.Stdout
-
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return err
-	}
-
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-
-	r.ffmpegCmd = cmd
-	r.ffmpegErr = stderr
-
-	go func() {
-		if err := cmd.Wait(); err != nil {
-			getLogger().Error("hls reader live: ffmpeg exited", zap.String("stream_id", r.id), zap.Error(err))
+		duration := time.Duration(0)
+		if prevPTS != 0 && framePTS >= prevPTS {
+			duration = framePTS - prevPTS
 		}
-		r.lastIO = time.Time{}
-	}()
 
-	return nil
+		frame := &Frame{
+			PTS:        framePTS,
+			DTS:        framePTS,
+			Payload:    [][]byte{cloneBytes(payload)},
+			Codec:      codec,
+			Timestamp:  time.Now(),
+			InputID:    r.id,
+			IsKeyFrame: true,
+			SequenceID: seqID,
+			Duration:   duration,
+			SampleRate: sampleRate,
+		}
+
+		r.mu.Lock()
+		frame.GOPID = r.lastVideoGOPID
+		r.mu.Unlock()
+
+		r.signalStarted()
+
+		select {
+		case r.audioChan <- frame:
+		case <-r.done:
+			return
+		default:
+			getLogger().Warn("hls live: dropped audio frame (channel full)",
+				zap.String("stream_id", r.id),
+				zap.Int64("seq", seqID))
+		}
+	}
 }
 
-func (r *hlsInputLive) startLogger() error {
-	if r.ffmpegErr == nil {
-		return fmt.Errorf("ffmpeg stderr pipe not initialized")
-	}
-
-	go func() {
-		sc := bufio.NewScanner(r.ffmpegErr)
-		for sc.Scan() {
-			select {
-			case <-r.done:
-				return
-			default:
-			}
-
-			line := sc.Text()
-			fps := parseFFmpegFps(line)
-
-			if fps >= r.fpsThreshold {
-				r.lastIO = time.Now()
-				r.isStarted = true
-				r.startedOnce.Do(func() {
-					close(r.started)
-				})
-			}
-
-			// logger.Error("input stream ffmpeg frame",
-			// 	zap.String("stream_id", r.State().StreamID),
-			// 	zap.Int64("fps", fps),
-			// 	zap.Time("last_io", r.lastIO))
-		}
-	}()
-
-	return nil
-}
-
-func (r *hlsInputLive) stopFFmpegPipeline() {
-	if r.ffmpegCmd == nil || r.ffmpegCmd.Process == nil {
-		return
-	}
-
-	_ = r.ffmpegCmd.Process.Signal(syscall.SIGTERM)
-
-	time.Sleep(2 * time.Second)
-	if err := r.ffmpegCmd.Process.Signal(syscall.Signal(0)); err == nil {
-		if killErr := r.ffmpegCmd.Process.Kill(); killErr != nil {
-			getLogger().Error("hls reader live: failed to kill ffmpeg process", zap.String("stream_id", r.id), zap.Error(killErr))
-		}
-	}
-	r.ffmpegCmd = nil
-	r.ffmpegErr = nil
-	r.lastIO = time.Time{}
-	r.isStarted = false
-}
-
-func parseFFmpegFps(line string) int64 {
-	idx := strings.Index(line, "fps=")
-	if idx == -1 {
-		return -1
-	}
-
-	rest := strings.TrimLeft(line[idx+len("fps="):], " \t")
-	if rest == "" {
-		return -1
-	}
-
-	end := 0
-	for end < len(rest) {
-		c := rest[end]
-		if c < '0' || c > '9' {
-			break
-		}
-		end++
-	}
-	if end == 0 {
-		return -1
-	}
-
-	frame, err := strconv.ParseInt(rest[:end], 10, 64)
-	if err != nil {
-		return -1
-	}
-
-	return frame
+func (r *hlsInputLive) signalStarted() {
+	r.signalOnce.Do(func() {
+		close(r.started)
+	})
 }
