@@ -3,10 +3,12 @@ package rawstreamer
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"sync"
 	"testing"
 	"time"
 
+	"restreamer/core/avsync"
 	"restreamer/core/raw"
 	shared "restreamer/core/shared"
 )
@@ -147,9 +149,11 @@ func (s *audioConfigOnlyStream) RestartInterval() time.Duration   { return 0 }
 func (s *audioConfigOnlyStream) WaitForStart(ctx context.Context) error {
 	return nil
 }
-func (s *audioConfigOnlyStream) State() *shared.State           { return &shared.State{} }
-func (s *audioConfigOnlyStream) EventChan() chan shared.Event   { return nil }
-func (s *audioConfigOnlyStream) AudioSpecificConfig() []byte    { return append([]byte(nil), s.audioConfig...) }
+func (s *audioConfigOnlyStream) State() *shared.State         { return &shared.State{} }
+func (s *audioConfigOnlyStream) EventChan() chan shared.Event { return nil }
+func (s *audioConfigOnlyStream) AudioSpecificConfig() []byte {
+	return append([]byte(nil), s.audioConfig...)
+}
 
 func TestAudioSpecificConfigFallsBackToPassthroughInputConfig(t *testing.T) {
 	streamer := &RawStreamer{
@@ -170,4 +174,63 @@ func TestAudioSpecificConfigFallsBackToPassthroughInputConfig(t *testing.T) {
 	if !bytes.Equal(got, []byte{0x12, 0x10}) {
 		t.Fatalf("unexpected audio config: got %v want %v", got, []byte{0x12, 0x10})
 	}
+}
+
+func TestBuildBufferedPCM16AudioFramePadsSilenceWhenBufferRunsShort(t *testing.T) {
+	buffer := []int16{100, -100, 200, -200}
+	timing := avsync.FrameTiming{
+		PTS:       80 * time.Millisecond,
+		DTS:       80 * time.Millisecond,
+		Duration:  time.Duration(2) * time.Second / mixedAudioSampleRate,
+		Timestamp: time.Unix(1_700_000_000, 0).Add(80 * time.Millisecond),
+	}
+
+	frame := buildBufferedPCM16AudioFrame("scene", &buffer, 2, timing)
+	if frame == nil || frame.Frame == nil {
+		t.Fatal("expected audio frame")
+	}
+	if frame.Frame.PTS != timing.PTS {
+		t.Fatalf("unexpected pts: got %v want %v", frame.Frame.PTS, timing.PTS)
+	}
+	if frame.SamplesPerChannel != 2 {
+		t.Fatalf("unexpected samples per channel: got %d want 2", frame.SamplesPerChannel)
+	}
+	if got := decodeInt16At(frame.Frame.Payload[0], 0); got != 100 {
+		t.Fatalf("unexpected sample[0]: got %d want 100", got)
+	}
+	if got := decodeInt16At(frame.Frame.Payload[0], 1); got != -100 {
+		t.Fatalf("unexpected sample[1]: got %d want -100", got)
+	}
+	if got := decodeInt16At(frame.Frame.Payload[0], 2); got != 200 {
+		t.Fatalf("unexpected sample[2]: got %d want 200", got)
+	}
+	if got := decodeInt16At(frame.Frame.Payload[0], 3); got != -200 {
+		t.Fatalf("unexpected sample[3]: got %d want -200", got)
+	}
+	if len(buffer) != 0 {
+		t.Fatalf("expected source buffer to be consumed, got %d samples", len(buffer))
+	}
+}
+
+func TestBuildBufferedPCM16AudioFrameProducesSilenceForEmptyBuffer(t *testing.T) {
+	var buffer []int16
+	timing := avsync.FrameTiming{
+		Duration:  time.Duration(2) * time.Second / mixedAudioSampleRate,
+		Timestamp: time.Unix(1_700_000_000, 0),
+	}
+
+	frame := buildBufferedPCM16AudioFrame("scene", &buffer, 2, timing)
+	if frame == nil || frame.Frame == nil {
+		t.Fatal("expected audio frame")
+	}
+	for i := 0; i < 4; i++ {
+		if got := decodeInt16At(frame.Frame.Payload[0], i); got != 0 {
+			t.Fatalf("unexpected sample[%d]: got %d want 0", i, got)
+		}
+	}
+}
+
+func decodeInt16At(payload []byte, index int) int16 {
+	offset := index * 2
+	return int16(binary.LittleEndian.Uint16(payload[offset:]))
 }

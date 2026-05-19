@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"restreamer/core/avsync"
 	"restreamer/core/raw"
 	shared "restreamer/core/shared"
 )
@@ -104,6 +105,7 @@ type RawStreamer struct {
 	runtimes []*inputRuntime
 	encoder  encoderRuntime
 	audio    audioEncoderRuntime
+	timeline *avsync.Timeline
 
 	decodedAudio chan decodedAudioFrame
 }
@@ -117,10 +119,12 @@ type inputRuntime struct {
 	videoDecoderMu sync.Mutex
 	videoHeaders   [][]byte
 
-	audioDecoderIn chan *shared.Frame
-	audioDecoder   audioDecoder
-	audioDecoderMu sync.Mutex
-	audioTransport string
+	audioDecoderIn  chan *shared.Frame
+	audioDecoder    audioDecoder
+	audioDecoderMu  sync.Mutex
+	audioTransport  string
+	audioResampler  raw.PCM16Resampler
+	audioResampleMu sync.Mutex
 
 	latestMu    sync.RWMutex
 	latestFrame *raw.VideoFrame

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"restreamer/core/avsync"
 	"restreamer/core/decoder"
 	"restreamer/core/encoder"
 	"restreamer/core/raw"
@@ -48,9 +49,18 @@ func (s *RawStreamer) consumeAudio() {
 				continue
 			}
 
-			out := s.prepareOutputAudioFrame(frame)
-			if !s.enqueueLatestAudio(out) {
+			transport := rawStreamerAACTransport(frame.PacketType)
+			if err := s.ensureAudioDecoder(rt, transport); err != nil {
+				s.droppedAudioFrames++
+				continue
+			}
+
+			select {
+			case rt.audioDecoderIn <- frame:
+			case <-s.done:
 				return
+			case <-time.After(250 * time.Millisecond):
+				s.droppedAudioFrames++
 			}
 		}
 	}
@@ -112,9 +122,7 @@ func (s *RawStreamer) initAudioPassthroughTranscoder() error {
 		input:   audioInput,
 		encoder: audioEncoder,
 	}
-
-	go s.consumeAudioEncoderOutput()
-	go s.consumeAudioEncoderErrors()
+	s.decodedAudio = make(chan decodedAudioFrame, max(1, s.cfg.audioBuffer))
 	return nil
 }
 
@@ -327,23 +335,6 @@ func (s *RawStreamer) consumeDecodedAudio(rt *inputRuntime) {
 				continue
 			}
 
-			if !s.shouldMixAudio() && index == s.audioPassthroughIndex() {
-				converted, err := prepareMixAudioFrame(frame)
-				if err != nil {
-					s.droppedAudioFrames++
-					continue
-				}
-
-				select {
-				case s.audio.input <- converted:
-				case <-s.done:
-					return
-				case <-time.After(250 * time.Millisecond):
-					s.droppedAudioFrames++
-				}
-				continue
-			}
-
 			select {
 			case s.decodedAudio <- decodedAudioFrame{index: index, frame: frame}:
 			case <-s.done:
@@ -364,7 +355,6 @@ func (s *RawStreamer) mixAudioLoop() {
 
 	buffers := make([][]int16, len(s.runtimes))
 	started := false
-	nextPTS := time.Duration(0)
 
 	for {
 		select {
@@ -378,7 +368,7 @@ func (s *RawStreamer) mixAudioLoop() {
 				continue
 			}
 
-			mixFrame, err := prepareMixAudioFrame(decoded.frame)
+			mixFrame, err := prepareMixAudioFrame(s.runtimes[decoded.index], decoded.frame)
 			if err != nil {
 				s.droppedAudioFrames++
 				continue
@@ -402,28 +392,99 @@ func (s *RawStreamer) mixAudioLoop() {
 
 			if !started && hasBufferedMixedAudioSamples(s.cfg.audioMixRatios, buffers, samplesPerTick) {
 				started = true
-				nextPTS = mixFrame.Frame.PTS
-				if nextPTS < 0 {
-					nextPTS = 0
-				}
 			}
 		case now := <-ticker.C:
 			if !started {
 				continue
 			}
 
+			timing := s.timeline.NextAudio(now)
 			mixed := buildBufferedMixedPCM16AudioFrame(
 				s.id,
 				s.cfg.audioMixRatios,
 				buffers,
 				mixedAudioSamplesPerAU,
-				nextPTS,
-				now,
+				timing,
 			)
-			nextPTS += frameDuration
 
 			select {
 			case s.audio.input <- mixed:
+			case <-s.done:
+				return
+			case <-time.After(250 * time.Millisecond):
+				s.droppedAudioFrames++
+			}
+		}
+	}
+}
+
+func (s *RawStreamer) passthroughAudioLoop() {
+	index := s.audioPassthroughIndex()
+	if index < 0 || index >= len(s.runtimes) {
+		return
+	}
+
+	samplesPerTick := mixedAudioSamplesPerAU * mixedAudioChannels
+	maxBufferedSamples := samplesPerTick * mixedAudioMaxBacklogAU
+	frameDuration := time.Duration(mixedAudioSamplesPerAU) * time.Second / time.Duration(mixedAudioSampleRate)
+	ticker := time.NewTicker(frameDuration)
+	defer ticker.Stop()
+
+	var buffer []int16
+	started := false
+
+	for {
+		select {
+		case <-s.done:
+			return
+		case decoded, ok := <-s.decodedAudio:
+			if !ok {
+				return
+			}
+			if decoded.index != index || decoded.frame == nil {
+				continue
+			}
+
+			audioFrame, err := prepareMixAudioFrame(s.runtimes[decoded.index], decoded.frame)
+			if err != nil {
+				s.droppedAudioFrames++
+				continue
+			}
+
+			samples, err := decodePCM16Payload(audioFrame.Frame.Payload[0])
+			if err != nil {
+				s.droppedAudioFrames++
+				continue
+			}
+			if len(samples) == 0 {
+				continue
+			}
+
+			buffer = append(buffer, samples...)
+			if len(buffer) > maxBufferedSamples {
+				drop := len(buffer) - maxBufferedSamples
+				buffer = append(buffer[:0], buffer[drop:]...)
+				s.droppedAudioFrames += float64(drop) / float64(samplesPerTick)
+			}
+
+			if !started && len(buffer) >= samplesPerTick {
+				started = true
+			}
+		case now := <-ticker.C:
+			if !started {
+				continue
+			}
+
+			timing := s.timeline.NextAudio(now)
+			pcm := buildBufferedPCM16AudioFrame(
+				s.id,
+				&buffer,
+				mixedAudioSamplesPerAU,
+				timing,
+			)
+
+			select {
+			case s.audio.input <- pcm:
 			case <-s.done:
 				return
 			case <-time.After(250 * time.Millisecond):
@@ -448,7 +509,7 @@ func inputAudioSpecificConfig(stream shared.Stream) []byte {
 	return provider.AudioSpecificConfig()
 }
 
-func prepareMixAudioFrame(frame *raw.AudioFrame) (*raw.AudioFrame, error) {
+func prepareMixAudioFrame(rt *inputRuntime, frame *raw.AudioFrame) (*raw.AudioFrame, error) {
 	if frame == nil {
 		return nil, fmt.Errorf("raw audio frame is nil")
 	}
@@ -461,7 +522,32 @@ func prepareMixAudioFrame(frame *raw.AudioFrame) (*raw.AudioFrame, error) {
 		}
 		return frame, nil
 	}
-	return raw.ConvertPCM16AudioFrame(frame, mixedAudioSampleRate, mixedAudioChannels)
+
+	resampler, err := ensureInputAudioResampler(rt)
+	if err != nil {
+		return nil, err
+	}
+	return resampler.Convert(frame)
+}
+
+func ensureInputAudioResampler(rt *inputRuntime) (raw.PCM16Resampler, error) {
+	if rt == nil {
+		return nil, fmt.Errorf("raw streamer input runtime is nil")
+	}
+
+	rt.audioResampleMu.Lock()
+	defer rt.audioResampleMu.Unlock()
+
+	if rt.audioResampler != nil {
+		return rt.audioResampler, nil
+	}
+
+	resampler, err := raw.NewPCM16Resampler(mixedAudioSampleRate, mixedAudioChannels)
+	if err != nil {
+		return nil, err
+	}
+	rt.audioResampler = resampler
+	return resampler, nil
 }
 
 func hasBufferedMixedAudioSamples(ratios []int, buffers [][]int16, minSamples int) bool {
@@ -493,8 +579,7 @@ func buildBufferedMixedPCM16AudioFrame(
 	ratios []int,
 	buffers [][]int16,
 	samplesPerChannel int,
-	pts time.Duration,
-	timestamp time.Time,
+	timing avsync.FrameTiming,
 ) *raw.AudioFrame {
 	totalSamples := samplesPerChannel * mixedAudioChannels
 	accum := make([]int32, totalSamples)
@@ -533,20 +618,57 @@ func buildBufferedMixedPCM16AudioFrame(
 		binary.LittleEndian.PutUint16(payload[i*2:], uint16(int16(mixed)))
 	}
 
-	duration := time.Duration(samplesPerChannel) * time.Second / time.Duration(mixedAudioSampleRate)
-	if timestamp.IsZero() {
-		timestamp = time.Now()
+	return &raw.AudioFrame{
+		Frame: &shared.Frame{
+			PTS:        timing.PTS,
+			DTS:        timing.DTS,
+			Duration:   timing.Duration,
+			Payload:    [][]byte{payload},
+			Codec:      raw.AudioCodecPCMS16LE,
+			PacketType: raw.AudioCodecPCMS16LE,
+			Timestamp:  timing.Timestamp,
+			InputID:    streamID,
+			IsKeyFrame: true,
+		},
+		SampleRate:        mixedAudioSampleRate,
+		Channels:          mixedAudioChannels,
+		SampleFormat:      raw.AudioCodecPCMS16LE,
+		SamplesPerChannel: samplesPerChannel,
+	}
+}
+
+func buildBufferedPCM16AudioFrame(
+	streamID string,
+	buffer *[]int16,
+	samplesPerChannel int,
+	timing avsync.FrameTiming,
+) *raw.AudioFrame {
+	totalSamples := samplesPerChannel * mixedAudioChannels
+	payload := make([]byte, totalSamples*2)
+
+	available := 0
+	if buffer != nil {
+		available = min(totalSamples, len(*buffer))
+		for i := 0; i < available; i++ {
+			binary.LittleEndian.PutUint16(payload[i*2:], uint16((*buffer)[i]))
+		}
+		remaining := (*buffer)[available:]
+		if len(remaining) == 0 {
+			*buffer = (*buffer)[:0]
+		} else {
+			*buffer = append((*buffer)[:0], remaining...)
+		}
 	}
 
 	return &raw.AudioFrame{
 		Frame: &shared.Frame{
-			PTS:        pts,
-			DTS:        pts,
-			Duration:   duration,
+			PTS:        timing.PTS,
+			DTS:        timing.DTS,
+			Duration:   timing.Duration,
 			Payload:    [][]byte{payload},
 			Codec:      raw.AudioCodecPCMS16LE,
 			PacketType: raw.AudioCodecPCMS16LE,
-			Timestamp:  timestamp,
+			Timestamp:  timing.Timestamp,
 			InputID:    streamID,
 			IsKeyFrame: true,
 		},

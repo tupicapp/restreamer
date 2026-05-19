@@ -45,7 +45,9 @@ make go-media-run ARGS="rawscene --stream-id raw-scene-1 -i rtmp://127.0.0.1:193
 - CI only validates the test suite. Version tags and GitHub releases are created manually when needed.
 - `RawStreamer` is now the generic raw-domain stream node. Scene composition is one usage of it through the default `Composer` raw processor.
 - `RawStreamer` currently exposes one normal encoded stream output; switching and fan-out still happen later in `Streamer`/`MultiCaster`.
+- A shared pre-encoder timeline in `core/avsync` owns composed stream timing so audio/video synchronization does not depend on any single encoder implementation. This is intended to stay reusable when one raw stream later fans out to multiple encoded variants such as H.264 and H.265.
 - The first raw processor contract is video-focused. Audio remains a separate strategy inside `RawStreamer` with passthrough or AAC mix behavior.
 - `RawStreamer` starts composing as soon as at least one input has a decoded frame; missing inputs render as background until they become ready.
-- `RawStreamer` currently normalizes composed audio to AAC-LC stereo at `48000 Hz` to match the repo's default RTMP/HLS output expectations.
+- `RawStreamer` keeps the output clock stable even when inputs stall: video reuses each input's last decoded frame, and the buffered AAC path pads missing audio samples with silence instead of letting input timing stall encoder output.
+- `RawStreamer` now keeps audio output stable through a buffered AAC encode path for both selected-input audio and mixed audio. When resampling is required, it normalizes to AAC-LC stereo at `48000 Hz` using a stateful per-input FFmpeg `swresample` pipeline with an explicit high-quality profile instead of per-frame default conversion.
 - Current raw-streamer codec coverage is intentionally narrow: `rawvideo` and `h264` for video ingest, `h264` for video output, and AAC for audio passthrough/mix flows.

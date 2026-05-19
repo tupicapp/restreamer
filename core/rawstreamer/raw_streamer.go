@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"restreamer/core/avsync"
 	"restreamer/core/decoder"
 	"restreamer/core/encoder"
 	"restreamer/core/raw"
@@ -68,6 +69,11 @@ func New(
 	}
 	cfg.audioMixRatios = audioMixRatios
 
+	timeline, err := avsync.NewTimeline(cfg.outputFPS, mixedAudioSampleRate, mixedAudioSamplesPerAU)
+	if err != nil {
+		return nil, err
+	}
+
 	streamer := &RawStreamer{
 		id:               id,
 		canvas:           canvas,
@@ -79,6 +85,7 @@ func New(
 		done:             make(chan struct{}),
 		started:          make(chan struct{}),
 		events:           shared.NewEventEmitter(128),
+		timeline:         timeline,
 	}
 
 	return streamer, nil
@@ -139,6 +146,10 @@ func (s *RawStreamer) init() error {
 		if err := s.initAudioMixer(); err != nil {
 			return fmt.Errorf("raw streamer audio mixer setup failed: %w", err)
 		}
+	} else {
+		if err := s.initAudioPassthroughTranscoder(); err != nil {
+			return fmt.Errorf("raw streamer audio passthrough setup failed: %w", err)
+		}
 	}
 
 	for _, input := range s.inputs {
@@ -153,10 +164,13 @@ func (s *RawStreamer) init() error {
 			go s.consumeInputAudio(idx, rt)
 		}
 		go s.mixAudioLoop()
-		go s.consumeAudioEncoderOutput()
-		go s.consumeAudioEncoderErrors()
 	} else {
 		go s.consumeAudio()
+		go s.passthroughAudioLoop()
+	}
+	if s.audio.encoder != nil {
+		go s.consumeAudioEncoderOutput()
+		go s.consumeAudioEncoderErrors()
 	}
 	go s.consumeEncoderOutput()
 	go s.consumeEncoderErrors()
@@ -211,6 +225,9 @@ func (s *RawStreamer) Close() {
 			}
 			if rt.audioDecoder != nil {
 				_ = rt.audioDecoder.Close()
+			}
+			if rt.audioResampler != nil {
+				_ = rt.audioResampler.Close()
 			}
 		}
 		if s.encoder.encoder != nil {
@@ -290,7 +307,6 @@ func (s *RawStreamer) processLoop() {
 	ticker := time.NewTicker(frameDuration)
 	defer ticker.Stop()
 
-	lastPTS := time.Duration(-1)
 	for {
 		select {
 		case <-s.done:
@@ -309,9 +325,8 @@ func (s *RawStreamer) processLoop() {
 				s.droppedVideoFrames++
 				continue
 			}
-			pts := deriveOutputVideoPTS(processed, lastPTS, frameDuration)
-			s.prepareOutputVideoFrame(processed, pts, frameDuration, now)
-			lastPTS = pts
+			timing := s.timeline.NextVideo(now)
+			s.prepareOutputVideoFrame(processed, timing)
 
 			select {
 			case s.encoder.input <- processed:
@@ -324,38 +339,16 @@ func (s *RawStreamer) processLoop() {
 	}
 }
 
-func (s *RawStreamer) prepareOutputVideoFrame(frame *raw.VideoFrame, pts, duration time.Duration, timestamp time.Time) {
+func (s *RawStreamer) prepareOutputVideoFrame(frame *raw.VideoFrame, timing avsync.FrameTiming) {
 	if frame == nil || frame.Frame == nil {
 		return
 	}
 
-	frame.Frame.PTS = pts
-	frame.Frame.DTS = pts
-	frame.Frame.Duration = duration
-	frame.Frame.Timestamp = timestamp
+	frame.Frame.PTS = timing.PTS
+	frame.Frame.DTS = timing.DTS
+	frame.Frame.Duration = timing.Duration
+	frame.Frame.Timestamp = timing.Timestamp
 	frame.Frame.InputID = s.id
-}
-
-func deriveOutputVideoPTS(frame *raw.VideoFrame, lastPTS, frameDuration time.Duration) time.Duration {
-	if frameDuration <= 0 {
-		frameDuration = 40 * time.Millisecond
-	}
-
-	candidate := time.Duration(0)
-	if frame != nil && frame.Frame != nil {
-		candidate = frame.Frame.PTS
-		if candidate == 0 && frame.Frame.DTS != 0 {
-			candidate = frame.Frame.DTS
-		}
-	}
-
-	if lastPTS < 0 {
-		return candidate
-	}
-	if candidate <= lastPTS {
-		return lastPTS + frameDuration
-	}
-	return candidate
 }
 
 func (s *RawStreamer) snapshotPlacements() ([]raw.VideoPlacement, bool) {
