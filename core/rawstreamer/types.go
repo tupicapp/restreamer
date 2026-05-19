@@ -110,8 +110,23 @@ type RawStreamer struct {
 	decodedAudio chan decodedAudioFrame
 }
 
+type InputState int
+
+const (
+	InputInitial InputState = iota
+	InputLive
+	InputDead
+)
+
 type inputRuntime struct {
 	spec Input
+
+	streamMu    sync.RWMutex
+	stream      shared.Stream
+	stateMu     sync.RWMutex
+	state       InputState
+	generation  uint64
+	restartWait time.Duration
 
 	videoCodec     string
 	videoDecoderIn chan *shared.Frame
@@ -171,8 +186,54 @@ type audioEncoderRuntime struct {
 }
 
 type decodedAudioFrame struct {
-	index int
-	frame *raw.AudioFrame
+	index      int
+	generation uint64
+	frame      *raw.AudioFrame
+}
+
+func (rt *inputRuntime) currentStream() shared.Stream {
+	if rt == nil {
+		return nil
+	}
+	rt.streamMu.RLock()
+	defer rt.streamMu.RUnlock()
+	return rt.stream
+}
+
+func (rt *inputRuntime) replaceStream(stream shared.Stream) {
+	if rt == nil {
+		return
+	}
+	rt.streamMu.Lock()
+	rt.stream = stream
+	rt.streamMu.Unlock()
+}
+
+func (rt *inputRuntime) currentGeneration() uint64 {
+	if rt == nil {
+		return 0
+	}
+	rt.stateMu.RLock()
+	defer rt.stateMu.RUnlock()
+	return rt.generation
+}
+
+func (rt *inputRuntime) matchesGeneration(generation uint64) bool {
+	if rt == nil {
+		return false
+	}
+	rt.stateMu.RLock()
+	defer rt.stateMu.RUnlock()
+	return rt.generation == generation
+}
+
+func (rt *inputRuntime) hasLatestFrame() bool {
+	if rt == nil {
+		return false
+	}
+	rt.latestMu.RLock()
+	defer rt.latestMu.RUnlock()
+	return rt.latestFrame != nil && rt.ready
 }
 
 func NormalizeAudioMixRatios(inputCount int, ratios []int) ([]int, error) {

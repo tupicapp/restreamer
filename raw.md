@@ -187,6 +187,7 @@ For each output tick:
 - it calls the raw processor
 - it stamps output timing metadata
 - it pushes the frame into the encoder
+- if an input session has died, or has gone stale past its restart interval, it keeps using that input's last decoded frame until a replacement session produces fresh frames again
 
 This matches the intended scene behavior and fits future processor types too.
 

@@ -21,51 +21,6 @@ const (
 	mixedAudioMaxBacklogAU = 8
 )
 
-func (s *RawStreamer) consumeAudio() {
-	if len(s.runtimes) == 0 {
-		return
-	}
-
-	index := s.audioPassthroughIndex()
-	if index < 0 || index >= len(s.runtimes) {
-		index = 0
-	}
-
-	rt := s.runtimes[index]
-
-	for {
-		select {
-		case <-s.done:
-			return
-		case frame, ok := <-rt.spec.Stream.GetAudioChan():
-			if !ok {
-				return
-			}
-			if frame == nil {
-				continue
-			}
-			if frame.Codec != "" && frame.Codec != "aac" {
-				s.droppedAudioFrames++
-				continue
-			}
-
-			transport := rawStreamerAACTransport(frame.PacketType)
-			if err := s.ensureAudioDecoder(rt, transport); err != nil {
-				s.droppedAudioFrames++
-				continue
-			}
-
-			select {
-			case rt.audioDecoderIn <- frame:
-			case <-s.done:
-				return
-			case <-time.After(250 * time.Millisecond):
-				s.droppedAudioFrames++
-			}
-		}
-	}
-}
-
 func (s *RawStreamer) audioPassthroughIndex() int {
 	if index := s.audioMixPassthroughIndex(); index >= 0 {
 		return index
@@ -78,7 +33,11 @@ func (s *RawStreamer) audioPassthroughConfig() []byte {
 	if index < 0 || index >= len(s.runtimes) {
 		return nil
 	}
-	return inputAudioSpecificConfig(s.runtimes[index].spec.Stream)
+	stream := s.runtimes[index].currentStream()
+	if stream == nil {
+		stream = s.runtimes[index].spec.Stream
+	}
+	return inputAudioSpecificConfig(stream)
 }
 
 func (s *RawStreamer) prepareOutputAudioFrame(frame *shared.Frame) *shared.Frame {
@@ -218,41 +177,27 @@ func (s *RawStreamer) initAudioMixer() error {
 	return nil
 }
 
-func (s *RawStreamer) consumeInputAudio(index int, rt *inputRuntime) {
-	if s.cfg.audioMixRatios[index] == 0 {
+func (s *RawStreamer) handleInputAudioFrame(rt *inputRuntime, generation uint64, frame *shared.Frame) {
+	if !rt.matchesGeneration(generation) {
+		return
+	}
+	if frame.Codec != "" && frame.Codec != "aac" {
+		s.droppedAudioFrames++
 		return
 	}
 
-	for {
-		select {
-		case <-s.done:
-			return
-		case frame, ok := <-rt.spec.Stream.GetAudioChan():
-			if !ok {
-				return
-			}
-			if frame == nil {
-				continue
-			}
-			if frame.Codec != "" && frame.Codec != "aac" {
-				s.droppedAudioFrames++
-				continue
-			}
+	transport := rawStreamerAACTransport(frame.PacketType)
+	if err := s.ensureAudioDecoder(rt, transport); err != nil {
+		s.droppedAudioFrames++
+		return
+	}
 
-			transport := rawStreamerAACTransport(frame.PacketType)
-			if err := s.ensureAudioDecoder(rt, transport); err != nil {
-				s.droppedAudioFrames++
-				continue
-			}
-
-			select {
-			case rt.audioDecoderIn <- frame:
-			case <-s.done:
-				return
-			case <-time.After(250 * time.Millisecond):
-				s.droppedAudioFrames++
-			}
-		}
+	select {
+	case rt.audioDecoderIn <- frame:
+	case <-s.done:
+		return
+	case <-time.After(250 * time.Millisecond):
+		s.droppedAudioFrames++
 	}
 }
 
@@ -300,11 +245,12 @@ func (s *RawStreamer) ensureAudioDecoder(rt *inputRuntime, transport decoder.AAC
 
 	rt.audioDecoder = audioDecoder
 	rt.audioTransport = string(transport)
-	go s.consumeDecodedAudio(rt)
+	generation := rt.currentGeneration()
+	go s.consumeDecodedAudio(rt, generation)
 	return nil
 }
 
-func (s *RawStreamer) consumeDecodedAudio(rt *inputRuntime) {
+func (s *RawStreamer) consumeDecodedAudio(rt *inputRuntime, generation uint64) {
 	index := -1
 	for i := range s.runtimes {
 		if s.runtimes[i] == rt {
@@ -317,6 +263,10 @@ func (s *RawStreamer) consumeDecodedAudio(rt *inputRuntime) {
 	}
 
 	for {
+		if !rt.matchesGeneration(generation) {
+			return
+		}
+
 		select {
 		case <-s.done:
 			return
@@ -334,9 +284,10 @@ func (s *RawStreamer) consumeDecodedAudio(rt *inputRuntime) {
 			if frame == nil {
 				continue
 			}
+			s.markInputLive(rt)
 
 			select {
-			case s.decodedAudio <- decodedAudioFrame{index: index, frame: frame}:
+			case s.decodedAudio <- decodedAudioFrame{index: index, generation: generation, frame: frame}:
 			case <-s.done:
 				return
 			case <-time.After(250 * time.Millisecond):
@@ -365,6 +316,12 @@ func (s *RawStreamer) mixAudioLoop() {
 				return
 			}
 			if decoded.frame == nil {
+				continue
+			}
+			if decoded.index < 0 || decoded.index >= len(s.runtimes) {
+				continue
+			}
+			if !s.runtimes[decoded.index].matchesGeneration(decoded.generation) {
 				continue
 			}
 
@@ -442,6 +399,9 @@ func (s *RawStreamer) passthroughAudioLoop() {
 				return
 			}
 			if decoded.index != index || decoded.frame == nil {
+				continue
+			}
+			if !s.runtimes[index].matchesGeneration(decoded.generation) {
 				continue
 			}
 

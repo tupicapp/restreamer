@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -230,7 +231,274 @@ func TestBuildBufferedPCM16AudioFrameProducesSilenceForEmptyBuffer(t *testing.T)
 	}
 }
 
+func TestSuperviseInputResumesAfterStreamReplacement(t *testing.T) {
+	factory := &restartableRawStreamFactory{
+		sequences: []byte{0x11, 0x22},
+	}
+	stream, err := factory.Next()
+	if err != nil {
+		t.Fatalf("factory.Next() error = %v", err)
+	}
+
+	rt := &inputRuntime{
+		spec: Input{
+			Layout: raw.VideoLayout{X: 0, Y: 0, Width: 2, Height: 2},
+		},
+		stream: stream,
+		state:  InputInitial,
+	}
+	streamer := &RawStreamer{
+		done: make(chan struct{}),
+		cfg:  config{videoBuffer: 4, audioBuffer: 4},
+	}
+
+	go streamer.superviseInput(0, rt)
+	defer close(streamer.done)
+
+	waitForRuntimePayload(t, rt, 0x22)
+}
+
+func TestSetLatestFrameIgnoresStaleGeneration(t *testing.T) {
+	rt := &inputRuntime{
+		generation: 2,
+		state:      InputLive,
+	}
+	streamer := &RawStreamer{}
+
+	current := &raw.VideoFrame{
+		Frame:  &shared.Frame{Payload: [][]byte{{0x22, 0, 0, 0, 0, 0}}},
+		Width:  2,
+		Height: 2,
+		PixFmt: raw.YUV420PPixFmt,
+	}
+	stale := &raw.VideoFrame{
+		Frame:  &shared.Frame{Payload: [][]byte{{0x11, 0, 0, 0, 0, 0}}},
+		Width:  2,
+		Height: 2,
+		PixFmt: raw.YUV420PPixFmt,
+	}
+
+	streamer.setLatestFrame(rt, 2, current)
+	streamer.setLatestFrame(rt, 1, stale)
+
+	rt.latestMu.RLock()
+	defer rt.latestMu.RUnlock()
+	if rt.latestFrame == nil {
+		t.Fatal("expected latest frame to be set")
+	}
+	if got := rt.latestFrame.Frame.Payload[0][0]; got != 0x22 {
+		t.Fatalf("unexpected payload marker: got %#x want %#x", got, byte(0x22))
+	}
+}
+
+func TestSuperviseInputRestartsStaleSessionWithoutChannelClosure(t *testing.T) {
+	factory := &staleRestartableRawStreamFactory{
+		sequences: []byte{0x11, 0x22},
+	}
+	stream, err := factory.Next()
+	if err != nil {
+		t.Fatalf("factory.Next() error = %v", err)
+	}
+
+	rt := &inputRuntime{
+		spec: Input{
+			Layout: raw.VideoLayout{X: 0, Y: 0, Width: 2, Height: 2},
+		},
+		stream: stream,
+		state:  InputInitial,
+	}
+	streamer := &RawStreamer{
+		done: make(chan struct{}),
+		cfg:  config{videoBuffer: 4, audioBuffer: 4},
+	}
+
+	go streamer.superviseInput(0, rt)
+	defer close(streamer.done)
+
+	waitForRuntimePayload(t, rt, 0x22)
+}
+
 func decodeInt16At(payload []byte, index int) int16 {
 	offset := index * 2
 	return int16(binary.LittleEndian.Uint16(payload[offset:]))
+}
+
+type restartableRawStreamFactory struct {
+	mu        sync.Mutex
+	sequences []byte
+	next      int
+}
+
+type staleRestartableRawStreamFactory struct {
+	mu        sync.Mutex
+	sequences []byte
+	next      int
+}
+
+func (f *staleRestartableRawStreamFactory) Next() (*staleRestartableRawStream, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.next >= len(f.sequences) {
+		return nil, fmt.Errorf("no more streams")
+	}
+	marker := f.sequences[f.next]
+	f.next++
+	return &staleRestartableRawStream{
+		id:         fmt.Sprintf("stale-restartable-%d", f.next),
+		marker:     marker,
+		videoCh:    make(chan *shared.Frame, 1),
+		audioCh:    make(chan *shared.Frame),
+		started:    make(chan struct{}),
+		factory:    f,
+		lastIOMu:   sync.RWMutex{},
+		lastIOTime: time.Now(),
+	}, nil
+}
+
+func (f *restartableRawStreamFactory) Next() (*restartableRawStream, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.next >= len(f.sequences) {
+		return nil, fmt.Errorf("no more streams")
+	}
+	marker := f.sequences[f.next]
+	f.next++
+	return &restartableRawStream{
+		id:      fmt.Sprintf("restartable-%d", f.next),
+		marker:  marker,
+		videoCh: make(chan *shared.Frame, 1),
+		audioCh: make(chan *shared.Frame),
+		started: make(chan struct{}),
+		factory: f,
+	}, nil
+}
+
+type restartableRawStream struct {
+	id      string
+	marker  byte
+	videoCh chan *shared.Frame
+	audioCh chan *shared.Frame
+	started chan struct{}
+	once    sync.Once
+	factory *restartableRawStreamFactory
+}
+
+func (s *restartableRawStream) GetVideoChan() chan *shared.Frame { return s.videoCh }
+func (s *restartableRawStream) GetAudioChan() chan *shared.Frame { return s.audioCh }
+func (s *restartableRawStream) GetID() string                    { return s.id }
+func (s *restartableRawStream) Type() string                     { return "reader" }
+func (s *restartableRawStream) Start() {
+	s.once.Do(func() {
+		close(s.started)
+		go func() {
+			s.videoCh <- &shared.Frame{
+				Payload:    [][]byte{{s.marker, 0, 0, 0, 0, 0}},
+				PacketType: raw.YUV420PPixFmt,
+				Timestamp:  time.Now(),
+			}
+			close(s.videoCh)
+			close(s.audioCh)
+		}()
+	})
+}
+func (s *restartableRawStream) Stop()  {}
+func (s *restartableRawStream) Close() {}
+func (s *restartableRawStream) Clone() (shared.Stream, error) {
+	return s.factory.Next()
+}
+func (s *restartableRawStream) WaitForStart(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.started:
+		return nil
+	}
+}
+func (s *restartableRawStream) IsRestartable() bool            { return true }
+func (s *restartableRawStream) RestartInterval() time.Duration { return 250 * time.Millisecond }
+func (s *restartableRawStream) State() *shared.State           { return &shared.State{LastIO: time.Now()} }
+func (s *restartableRawStream) EventChan() chan shared.Event   { return nil }
+
+type staleRestartableRawStream struct {
+	id         string
+	marker     byte
+	videoCh    chan *shared.Frame
+	audioCh    chan *shared.Frame
+	started    chan struct{}
+	once       sync.Once
+	factory    *staleRestartableRawStreamFactory
+	lastIOMu   sync.RWMutex
+	lastIOTime time.Time
+}
+
+func (s *staleRestartableRawStream) GetVideoChan() chan *shared.Frame { return s.videoCh }
+func (s *staleRestartableRawStream) GetAudioChan() chan *shared.Frame { return s.audioCh }
+func (s *staleRestartableRawStream) GetID() string                    { return s.id }
+func (s *staleRestartableRawStream) Type() string                     { return "reader" }
+func (s *staleRestartableRawStream) Start() {
+	s.once.Do(func() {
+		close(s.started)
+		go func() {
+			s.touch()
+			s.videoCh <- &shared.Frame{
+				Payload:    [][]byte{{s.marker, 0, 0, 0, 0, 0}},
+				PacketType: raw.YUV420PPixFmt,
+				Timestamp:  time.Now(),
+			}
+		}()
+	})
+}
+func (s *staleRestartableRawStream) Stop()  {}
+func (s *staleRestartableRawStream) Close() {}
+func (s *staleRestartableRawStream) Clone() (shared.Stream, error) {
+	return s.factory.Next()
+}
+func (s *staleRestartableRawStream) WaitForStart(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.started:
+		return nil
+	}
+}
+func (s *staleRestartableRawStream) IsRestartable() bool            { return true }
+func (s *staleRestartableRawStream) RestartInterval() time.Duration { return 100 * time.Millisecond }
+func (s *staleRestartableRawStream) State() *shared.State {
+	s.lastIOMu.RLock()
+	defer s.lastIOMu.RUnlock()
+	return &shared.State{LastIO: s.lastIOTime}
+}
+func (s *staleRestartableRawStream) EventChan() chan shared.Event { return nil }
+func (s *staleRestartableRawStream) touch() {
+	s.lastIOMu.Lock()
+	s.lastIOTime = time.Now()
+	s.lastIOMu.Unlock()
+}
+
+func waitForRuntimePayload(t *testing.T, rt *inputRuntime, marker byte) {
+	t.Helper()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		rt.latestMu.RLock()
+		frame := rt.latestFrame
+		ready := rt.ready
+		rt.latestMu.RUnlock()
+
+		if ready && frame != nil && len(frame.Frame.Payload) > 0 && len(frame.Frame.Payload[0]) > 0 && frame.Frame.Payload[0][0] == marker {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	rt.latestMu.RLock()
+	defer rt.latestMu.RUnlock()
+
+	currentMarker := byte(0)
+	if rt.latestFrame != nil && len(rt.latestFrame.Frame.Payload) > 0 && len(rt.latestFrame.Frame.Payload[0]) > 0 {
+		currentMarker = rt.latestFrame.Frame.Payload[0][0]
+	}
+	t.Fatalf("timed out waiting for payload marker %#x (ready=%v generation=%d current=%#x)", marker, rt.ready, rt.currentGeneration(), currentMarker)
 }

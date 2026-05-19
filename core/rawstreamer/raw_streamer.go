@@ -127,7 +127,11 @@ func (s *RawStreamer) init() error {
 		if err := input.Layout.Validate(); err != nil {
 			return fmt.Errorf("raw streamer input %d layout invalid: %w", idx, err)
 		}
-		s.runtimes = append(s.runtimes, &inputRuntime{spec: input})
+		s.runtimes = append(s.runtimes, &inputRuntime{
+			spec:   input,
+			stream: input.Stream,
+			state:  InputInitial,
+		})
 	}
 
 	videoEncoder, encoderInput, err := s.newVideoEncoder()
@@ -152,20 +156,12 @@ func (s *RawStreamer) init() error {
 		}
 	}
 
-	for _, input := range s.inputs {
-		input.Stream.Start()
-	}
-
 	for idx, rt := range s.runtimes {
-		go s.consumeInputVideo(idx, rt)
+		go s.superviseInput(idx, rt)
 	}
 	if s.shouldMixAudio() {
-		for idx, rt := range s.runtimes {
-			go s.consumeInputAudio(idx, rt)
-		}
 		go s.mixAudioLoop()
 	} else {
-		go s.consumeAudio()
 		go s.passthroughAudioLoop()
 	}
 	if s.audio.encoder != nil {
@@ -201,8 +197,10 @@ func (s *RawStreamer) newVideoEncoder() (videoEncoder, chan *raw.VideoFrame, err
 }
 
 func (s *RawStreamer) Stop() {
-	for _, input := range s.inputs {
-		input.Stream.Stop()
+	for _, rt := range s.runtimes {
+		if stream := rt.currentStream(); stream != nil {
+			stream.Stop()
+		}
 	}
 	s.events.Emit(shared.Event{
 		Type:       shared.EventTypeStreamStopped,
@@ -216,19 +214,11 @@ func (s *RawStreamer) Close() {
 	s.closeOnce.Do(func() {
 		close(s.done)
 
-		for _, input := range s.inputs {
-			input.Stream.Close()
-		}
 		for _, rt := range s.runtimes {
-			if rt.videoDecoder != nil {
-				_ = rt.videoDecoder.Close()
+			if stream := rt.currentStream(); stream != nil {
+				stream.Close()
 			}
-			if rt.audioDecoder != nil {
-				_ = rt.audioDecoder.Close()
-			}
-			if rt.audioResampler != nil {
-				_ = rt.audioResampler.Close()
-			}
+			s.resetInputRuntime(rt)
 		}
 		if s.encoder.encoder != nil {
 			_ = s.encoder.encoder.Close()
@@ -371,62 +361,42 @@ func (s *RawStreamer) snapshotPlacements() ([]raw.VideoPlacement, bool) {
 	return placements, len(placements) > 0
 }
 
-func (s *RawStreamer) consumeInputVideo(index int, rt *inputRuntime) {
-	_ = index
-
+func (s *RawStreamer) superviseInput(index int, rt *inputRuntime) {
+	retryDelay := 250 * time.Millisecond
 	for {
 		select {
 		case <-s.done:
 			return
-		case frame, ok := <-rt.spec.Stream.GetVideoChan():
-			if !ok {
+		default:
+		}
+
+		generation := s.beginInputSession(rt)
+		stream := rt.currentStream()
+		if stream == nil {
+			s.markInputDead(rt)
+			if !sleepUntilDone(s.done, retryDelay) {
 				return
 			}
-			if frame == nil {
-				continue
-			}
-
-			codec := strings.ToLower(strings.TrimSpace(frame.Codec))
-			switch codec {
-			case "", raw.VideoCodec:
-				rawFrame := &raw.VideoFrame{
-					Frame:  frame,
-					Width:  rt.spec.Layout.Width,
-					Height: rt.spec.Layout.Height,
-					PixFmt: raw.YUV420PPixFmt,
-				}
-				if frame.PacketType == raw.YUV420PPixFmt {
-					rawFrame.PixFmt = frame.PacketType
-				}
-				if err := rawFrame.Validate(); err != nil {
-					s.droppedVideoFrames++
-					continue
-				}
-				s.setLatestFrame(rt, rawFrame)
-			case "h264":
-				rt.videoHeaders = updateH264Headers(rt.videoHeaders, frame.Payload)
-				if rt.videoDecoder == nil && !frame.IsKeyFrame {
-					s.droppedVideoFrames++
-					continue
-				}
-				if frame.IsKeyFrame {
-					frame = cloneFrameWithH264Headers(frame, rt.videoHeaders)
-				}
-				if err := s.ensureVideoDecoder(rt, codec); err != nil {
-					s.droppedVideoFrames++
-					continue
-				}
-				select {
-				case rt.videoDecoderIn <- frame:
-				case <-s.done:
-					return
-				case <-time.After(250 * time.Millisecond):
-					s.droppedVideoFrames++
-				}
-			default:
-				s.droppedVideoFrames++
-			}
+			continue
 		}
+
+		stream.Start()
+		retryDelay = 250 * time.Millisecond
+		s.consumeInputSession(index, rt, generation, stream)
+		s.markInputDead(rt)
+		s.resetInputRuntime(rt)
+
+		replacement, err := stream.Clone()
+		if err != nil {
+			retryDelay = nextInputRetryDelay(retryDelay)
+			if !sleepUntilDone(s.done, retryDelay) {
+				return
+			}
+			continue
+		}
+
+		rt.replaceStream(replacement)
+		stream.Close()
 	}
 }
 
@@ -472,12 +442,17 @@ func (s *RawStreamer) ensureVideoDecoder(rt *inputRuntime, codec string) error {
 
 	rt.videoCodec = codec
 	rt.videoDecoder = videoDecoder
-	go s.consumeDecodedFrames(rt)
+	generation := rt.currentGeneration()
+	go s.consumeDecodedFrames(rt, generation)
 	return nil
 }
 
-func (s *RawStreamer) consumeDecodedFrames(rt *inputRuntime) {
+func (s *RawStreamer) consumeDecodedFrames(rt *inputRuntime, generation uint64) {
 	for {
+		if !rt.matchesGeneration(generation) {
+			return
+		}
+
 		select {
 		case <-s.done:
 			return
@@ -495,16 +470,218 @@ func (s *RawStreamer) consumeDecodedFrames(rt *inputRuntime) {
 			if frame == nil {
 				continue
 			}
-			s.setLatestFrame(rt, frame)
+			s.setLatestFrame(rt, generation, frame)
 		}
 	}
 }
 
-func (s *RawStreamer) setLatestFrame(rt *inputRuntime, frame *raw.VideoFrame) {
+func (s *RawStreamer) setLatestFrame(rt *inputRuntime, generation uint64, frame *raw.VideoFrame) {
+	if !rt.matchesGeneration(generation) {
+		return
+	}
+
 	rt.latestMu.Lock()
 	rt.latestFrame = frame
 	rt.ready = true
 	rt.latestMu.Unlock()
+	s.markInputLive(rt)
+}
+
+func (s *RawStreamer) consumeInputSession(index int, rt *inputRuntime, generation uint64, stream shared.Stream) {
+	videoCh := stream.GetVideoChan()
+	audioCh := stream.GetAudioChan()
+	audioEnabled := s.shouldProcessInputAudio(index)
+	if !audioEnabled {
+		audioCh = nil
+	}
+	staleCheck := time.NewTicker(500 * time.Millisecond)
+	defer staleCheck.Stop()
+	sessionStartedAt := time.Now()
+
+	for videoCh != nil || audioCh != nil {
+		select {
+		case <-s.done:
+			return
+		case frame, ok := <-videoCh:
+			if !ok {
+				videoCh = nil
+				continue
+			}
+			if frame == nil {
+				continue
+			}
+			s.handleInputVideoFrame(rt, generation, frame)
+		case frame, ok := <-audioCh:
+			if !ok {
+				audioCh = nil
+				continue
+			}
+			if frame == nil {
+				continue
+			}
+			s.handleInputAudioFrame(rt, generation, frame)
+		case <-staleCheck.C:
+			if s.shouldRestartInputSession(stream, sessionStartedAt) {
+				return
+			}
+		}
+	}
+}
+
+func (s *RawStreamer) shouldRestartInputSession(stream shared.Stream, sessionStartedAt time.Time) bool {
+	if stream == nil || !stream.IsRestartable() {
+		return false
+	}
+
+	interval := stream.RestartInterval()
+	if interval <= 0 {
+		return false
+	}
+
+	state := stream.State()
+	if state == nil {
+		return time.Since(sessionStartedAt) > interval
+	}
+	if !state.LastIO.IsZero() {
+		return time.Since(state.LastIO) > interval
+	}
+	return time.Since(sessionStartedAt) > interval
+}
+
+func (s *RawStreamer) handleInputVideoFrame(rt *inputRuntime, generation uint64, frame *shared.Frame) {
+	codec := strings.ToLower(strings.TrimSpace(frame.Codec))
+	switch codec {
+	case "", raw.VideoCodec:
+		rawFrame := &raw.VideoFrame{
+			Frame:  frame,
+			Width:  rt.spec.Layout.Width,
+			Height: rt.spec.Layout.Height,
+			PixFmt: raw.YUV420PPixFmt,
+		}
+		if frame.PacketType == raw.YUV420PPixFmt {
+			rawFrame.PixFmt = frame.PacketType
+		}
+		if err := rawFrame.Validate(); err != nil {
+			s.droppedVideoFrames++
+			return
+		}
+		s.setLatestFrame(rt, generation, rawFrame)
+	case "h264":
+		rt.videoHeaders = updateH264Headers(rt.videoHeaders, frame.Payload)
+		if rt.videoDecoder == nil && !frame.IsKeyFrame {
+			s.droppedVideoFrames++
+			return
+		}
+		if frame.IsKeyFrame {
+			frame = cloneFrameWithH264Headers(frame, rt.videoHeaders)
+		}
+		if err := s.ensureVideoDecoder(rt, codec); err != nil {
+			s.droppedVideoFrames++
+			return
+		}
+		select {
+		case rt.videoDecoderIn <- frame:
+		case <-s.done:
+			return
+		case <-time.After(250 * time.Millisecond):
+			s.droppedVideoFrames++
+		}
+	default:
+		s.droppedVideoFrames++
+	}
+}
+
+func (s *RawStreamer) shouldProcessInputAudio(index int) bool {
+	if s.shouldMixAudio() {
+		if index < 0 || index >= len(s.cfg.audioMixRatios) {
+			return false
+		}
+		return s.cfg.audioMixRatios[index] > 0
+	}
+	return index == s.audioPassthroughIndex()
+}
+
+func (s *RawStreamer) beginInputSession(rt *inputRuntime) uint64 {
+	rt.stateMu.Lock()
+	defer rt.stateMu.Unlock()
+
+	rt.generation++
+	if rt.generation == 0 {
+		rt.generation = 1
+	}
+	if rt.state == InputInitial {
+		return rt.generation
+	}
+	rt.state = InputDead
+	return rt.generation
+}
+
+func (s *RawStreamer) markInputLive(rt *inputRuntime) {
+	rt.stateMu.Lock()
+	rt.state = InputLive
+	rt.stateMu.Unlock()
+}
+
+func (s *RawStreamer) markInputDead(rt *inputRuntime) {
+	rt.stateMu.Lock()
+	if rt.state != InputInitial || rt.hasLatestFrame() {
+		rt.state = InputDead
+	}
+	rt.stateMu.Unlock()
+}
+
+func (s *RawStreamer) resetInputRuntime(rt *inputRuntime) {
+	rt.videoDecoderMu.Lock()
+	if rt.videoDecoder != nil {
+		_ = rt.videoDecoder.Close()
+	}
+	rt.videoDecoder = nil
+	rt.videoDecoderIn = nil
+	rt.videoCodec = ""
+	rt.videoHeaders = nil
+	rt.videoDecoderMu.Unlock()
+
+	rt.audioDecoderMu.Lock()
+	if rt.audioDecoder != nil {
+		_ = rt.audioDecoder.Close()
+	}
+	rt.audioDecoder = nil
+	rt.audioDecoderIn = nil
+	rt.audioTransport = ""
+	rt.audioDecoderMu.Unlock()
+
+	rt.audioResampleMu.Lock()
+	if rt.audioResampler != nil {
+		_ = rt.audioResampler.Close()
+	}
+	rt.audioResampler = nil
+	rt.audioResampleMu.Unlock()
+}
+
+func nextInputRetryDelay(current time.Duration) time.Duration {
+	if current <= 0 {
+		return 250 * time.Millisecond
+	}
+	next := current * 2
+	if next > 5*time.Second {
+		return 5 * time.Second
+	}
+	return next
+}
+
+func sleepUntilDone(done <-chan struct{}, d time.Duration) bool {
+	if d <= 0 {
+		d = 50 * time.Millisecond
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+
+	select {
+	case <-done:
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 func (s *RawStreamer) consumeEncoderOutput() {
