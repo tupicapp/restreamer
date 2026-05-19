@@ -72,7 +72,13 @@ type rtmpWriter struct {
 	closeOnce sync.Once
 
 	pendingAudio []*shared.Frame
+	audioSampleRate int
+	audioConfigProvider audioConfigProvider
 	events       *shared.EventEmitter
+}
+
+type audioConfigProvider interface {
+	AudioSpecificConfig() []byte
 }
 
 func NewRtmpWriter(id, url string) (shared.Stream, error) {
@@ -107,6 +113,8 @@ func (s *rtmpWriter) newLibWriter(sps, pps []byte) (RtmpWriter, error) {
 		return nil, err
 	}
 
+	audioConfig := s.resolveAudioConfigLocked()
+
 	writer := &rtmpLibWriter{}
 	writer.videoTrack = &gortmplib.Track{
 		Codec: &codecs.H264{
@@ -116,11 +124,7 @@ func (s *rtmpWriter) newLibWriter(sps, pps []byte) (RtmpWriter, error) {
 	}
 	writer.audioTrack = &gortmplib.Track{
 		Codec: &codecs.MPEG4Audio{
-			Config: &mpeg4audio.AudioSpecificConfig{
-				Type:         mpeg4audio.ObjectTypeAACLC,
-				SampleRate:   DefaultAudioRate,
-				ChannelCount: DefaultAudioChannels,
-			},
+			Config: audioConfig,
 		},
 	}
 
@@ -168,6 +172,12 @@ func (o *rtmpWriter) IsKeyFrame(*shared.Frame) bool { return true }
 
 func (s *rtmpWriter) Clone() (shared.Stream, error) {
 	return NewRtmpWriter(s.id, s.url)
+}
+
+func (s *rtmpWriter) SetAudioConfigProvider(provider interface{ AudioSpecificConfig() []byte }) {
+	s.writerMu.Lock()
+	defer s.writerMu.Unlock()
+	s.audioConfigProvider = provider
 }
 
 func (s *rtmpWriter) WaitForStart(ctx context.Context) error {
@@ -396,6 +406,9 @@ func (s *rtmpWriter) queuePendingAudioLocked(f *shared.Frame) {
 	if f == nil || len(f.Payload) == 0 {
 		return
 	}
+	if f.SampleRate > 0 {
+		s.audioSampleRate = f.SampleRate
+	}
 
 	const maxPendingAudioFrames = 256
 	if len(s.pendingAudio) >= maxPendingAudioFrames {
@@ -403,6 +416,29 @@ func (s *rtmpWriter) queuePendingAudioLocked(f *shared.Frame) {
 		s.DroppedAudioFrames++
 	}
 	s.pendingAudio = append(s.pendingAudio, cloneFrame(f))
+}
+
+func (s *rtmpWriter) resolveAudioConfigLocked() *mpeg4audio.AudioSpecificConfig {
+	if s.audioConfigProvider != nil {
+		if rawConfig := s.audioConfigProvider.AudioSpecificConfig(); len(rawConfig) > 0 {
+			var parsed mpeg4audio.AudioSpecificConfig
+			if err := parsed.Unmarshal(rawConfig); err == nil {
+				if parsed.SampleRate > 0 && parsed.ChannelCount > 0 {
+					return &parsed
+				}
+			}
+		}
+	}
+
+	audioSampleRate := DefaultAudioRate
+	if s.audioSampleRate > 0 {
+		audioSampleRate = s.audioSampleRate
+	}
+	return &mpeg4audio.AudioSpecificConfig{
+		Type:         mpeg4audio.ObjectTypeAACLC,
+		SampleRate:   audioSampleRate,
+		ChannelCount: DefaultAudioChannels,
+	}
 }
 
 func (s *rtmpWriter) flushPendingAudioLocked() {

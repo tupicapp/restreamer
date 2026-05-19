@@ -1,177 +1,108 @@
 package scenes
 
 import (
-	"context"
-	"sync"
+	"fmt"
 	"time"
 
 	"restreamer/core/raw"
+	"restreamer/core/rawstreamer"
 	shared "restreamer/core/shared"
+	"restreamer/core/streamfactory"
 )
 
-type Input struct {
-	Stream shared.Stream
-	Layout raw.VideoLayout
+type Input = rawstreamer.Input
+type Scene = rawstreamer.RawStreamer
+type Option = rawstreamer.Option
+
+var (
+	WithOutputFPS            = rawstreamer.WithOutputFPS
+	WithVideoBuffer          = rawstreamer.WithVideoBuffer
+	WithAudioBuffer          = rawstreamer.WithAudioBuffer
+	WithAudioPassthroughFrom = rawstreamer.WithAudioPassthroughFrom
+	WithAudioMixRatios       = rawstreamer.WithAudioMixRatios
+)
+
+type SceneMode string
+
+const (
+	SceneModeCompose     SceneMode = "compose"
+	SceneModePassthrough SceneMode = "passthrough"
+)
+
+type SceneSpec struct {
+	Mode           SceneMode
+	SceneID        string
+	InputURLs      []string
+	Layouts        []shared.VideoLayout
+	Canvas         shared.CanvasSpec
+	OutputURL      string
+	HLSOptions     *streamfactory.HLSOutputOptions
+	AudioFrom      int
+	AudioRatios    []int
+	OutputFPS      int
+	StartupTimeout time.Duration
 }
 
-type config struct {
-	outputFPS            int
-	videoBuffer          int
-	audioBuffer          int
-	audioPassthroughFrom int
-	audioMixRatios       []int
+type SceneEntry struct {
+	ID   string
+	Name string
 }
 
-type Option func(*config)
+type MultiSceneDefinition struct {
+	Name     string
+	InputURL []string
+	Layouts  []shared.VideoLayout
+}
 
-func WithOutputFPS(fps int) Option {
-	return func(cfg *config) {
-		cfg.outputFPS = fps
+type MultiSceneSpec struct {
+	OutputURL      string
+	HLSOptions     *streamfactory.HLSOutputOptions
+	HasCanvas      bool
+	Canvas         shared.CanvasSpec
+	AudioFrom      int
+	AudioRatios    []int
+	OutputFPS      int
+	StartupTimeout time.Duration
+	Definitions    []MultiSceneDefinition
+}
+
+func NewScene(id string, canvas raw.CanvasSpec, inputs []Input, opts ...Option) (*Scene, error) {
+	return rawstreamer.New(
+		id,
+		canvas,
+		inputs,
+		raw.NewComposer,
+		append([]Option{rawstreamer.WithStreamType("scene")}, opts...)...,
+	)
+}
+
+func NormalizeAudioMixRatiosForCLI(inputCount int, ratios []int) ([]int, error) {
+	return rawstreamer.NormalizeAudioMixRatios(inputCount, ratios)
+}
+
+func DeriveCanvas(layouts []shared.VideoLayout) (shared.CanvasSpec, error) {
+	if len(layouts) == 0 {
+		return shared.CanvasSpec{}, fmt.Errorf("--canvas is required when no --layout values are provided")
 	}
-}
 
-func WithVideoBuffer(size int) Option {
-	return func(cfg *config) {
-		cfg.videoBuffer = size
-	}
-}
-
-func WithAudioBuffer(size int) Option {
-	return func(cfg *config) {
-		cfg.audioBuffer = size
-	}
-}
-
-func WithAudioPassthroughFrom(index int) Option {
-	return func(cfg *config) {
-		cfg.audioPassthroughFrom = index
-	}
-}
-
-func WithAudioMixRatios(ratios []int) Option {
-	return func(cfg *config) {
-		if len(ratios) == 0 {
-			cfg.audioMixRatios = nil
-			return
+	maxX := 0
+	maxY := 0
+	for idx, layout := range layouts {
+		if err := layout.Validate(); err != nil {
+			return shared.CanvasSpec{}, fmt.Errorf("layout %d invalid: %w", idx+1, err)
 		}
-		cfg.audioMixRatios = append([]int(nil), ratios...)
+		right := layout.X + layout.Width
+		bottom := layout.Y + layout.Height
+		if right > maxX {
+			maxX = right
+		}
+		if bottom > maxY {
+			maxY = bottom
+		}
 	}
-}
 
-type Scene struct {
-	id     string
-	canvas raw.CanvasSpec
-	inputs []Input
-	cfg    config
-
-	videoChan chan *shared.Frame
-	audioChan chan *shared.Frame
-
-	done      chan struct{}
-	started   chan struct{}
-	startOnce sync.Once
-	closeOnce sync.Once
-	startErr  error
-	events    *shared.EventEmitter
-
-	lastIOMu sync.RWMutex
-	lastIO   time.Time
-
-	totalVideoFrames   int64
-	totalAudioFrames   int64
-	droppedVideoFrames float64
-	droppedAudioFrames float64
-
-	runtimes []*inputRuntime
-	encoder  encoderRuntime
-	audio    audioEncoderRuntime
-
-	decodedAudio chan decodedAudioFrame
-}
-
-type inputRuntime struct {
-	spec Input
-
-	videoDecoderIn chan *shared.Frame
-	videoDecoder   videoDecoder
-	videoDecoderMu sync.Mutex
-
-	audioDecoderIn chan *shared.Frame
-	audioDecoder   audioDecoder
-	audioDecoderMu sync.Mutex
-	audioTransport string
-
-	latestMu    sync.RWMutex
-	latestFrame *raw.VideoFrame
-	ready       bool
-}
-
-type videoDecoder interface {
-	Start() error
-	Output() <-chan *raw.VideoFrame
-	Errors() <-chan error
-	Close() error
-}
-
-type videoEncoder interface {
-	Start() error
-	Output() <-chan *shared.Frame
-	Errors() <-chan error
-	Close() error
-}
-
-type audioDecoder interface {
-	Start() error
-	Output() <-chan *raw.AudioFrame
-	Errors() <-chan error
-	Close() error
-}
-
-type audioEncoder interface {
-	Start() error
-	Output() <-chan *shared.Frame
-	Errors() <-chan error
-	Close() error
-	AudioSpecificConfig() []byte
-}
-
-type encoderRuntime struct {
-	input   chan *raw.VideoFrame
-	encoder videoEncoder
-}
-
-type audioEncoderRuntime struct {
-	input   chan *raw.AudioFrame
-	encoder audioEncoder
-}
-
-type decodedAudioFrame struct {
-	index int
-	frame *raw.AudioFrame
-}
-
-func (s *Scene) GetVideoChan() chan *shared.Frame { return s.videoChan }
-
-func (s *Scene) GetAudioChan() chan *shared.Frame { return s.audioChan }
-
-func (s *Scene) GetID() string { return s.id }
-
-func (s *Scene) Type() string { return "scene" }
-
-func (s *Scene) IsRestartable() bool { return false }
-
-func (s *Scene) RestartInterval() time.Duration { return 0 }
-
-func (s *Scene) WaitForStart(ctx context.Context) error {
-	if s.startErr != nil {
-		return s.startErr
+	if _, err := shared.ExpectedYUV420PSize(maxX, maxY); err != nil {
+		return shared.CanvasSpec{}, fmt.Errorf("derived canvas invalid: %w", err)
 	}
-	select {
-	case <-s.started:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-s.done:
-		return context.Canceled
-	}
+	return shared.NewBlackCanvasSpec(maxX, maxY), nil
 }

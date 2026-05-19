@@ -12,6 +12,6 @@ func Execute() error {
 }
 
 func init() {
-	rootCmd.AddCommand(NewSceneCommand())
+	rootCmd.AddCommand(NewRawSceneCommand())
 	rootCmd.AddCommand(NewSwitchCommand())
 }

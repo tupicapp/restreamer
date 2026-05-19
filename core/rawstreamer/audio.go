@@ -1,4 +1,4 @@
-package scenes
+package rawstreamer
 
 import (
 	"encoding/binary"
@@ -14,48 +14,148 @@ import (
 )
 
 const (
-	sceneMixedAudioSampleRate   = 44100
-	sceneMixedAudioChannels     = 2
-	sceneMixedAudioSamplesPerAU = 1024
-	sceneMixedAudioMaxBacklogAU = 8
+	mixedAudioSampleRate   = 48000
+	mixedAudioChannels     = 2
+	mixedAudioSamplesPerAU = 1024
+	mixedAudioMaxBacklogAU = 8
 )
 
-func NormalizeAudioMixRatiosForCLI(inputCount int, ratios []int) ([]int, error) {
-	return normalizeAudioMixRatios(inputCount, ratios)
-}
-
-func normalizeAudioMixRatios(inputCount int, ratios []int) ([]int, error) {
-	if inputCount <= 0 {
-		return nil, fmt.Errorf("scene requires at least one input")
-	}
-	if len(ratios) == 0 {
-		return nil, nil
-	}
-	if len(ratios) != inputCount {
-		return nil, fmt.Errorf("--audio-ratio count must match input count")
+func (s *RawStreamer) consumeAudio() {
+	if len(s.runtimes) == 0 {
+		return
 	}
 
-	normalized := make([]int, len(ratios))
-	total := 0
-	for i, ratio := range ratios {
-		if ratio < 0 || ratio > 100 {
-			return nil, fmt.Errorf("--audio-ratio values must be between 0 and 100")
+	index := s.audioPassthroughIndex()
+	if index < 0 || index >= len(s.runtimes) {
+		index = 0
+	}
+
+	rt := s.runtimes[index]
+
+	for {
+		select {
+		case <-s.done:
+			return
+		case frame, ok := <-rt.spec.Stream.GetAudioChan():
+			if !ok {
+				return
+			}
+			if frame == nil {
+				continue
+			}
+			if frame.Codec != "" && frame.Codec != "aac" {
+				s.droppedAudioFrames++
+				continue
+			}
+
+			out := s.prepareOutputAudioFrame(frame)
+			if !s.enqueueLatestAudio(out) {
+				return
+			}
 		}
-		normalized[i] = ratio
-		total += ratio
 	}
-	if total != 100 {
-		return nil, fmt.Errorf("--audio-ratio values must sum to 100")
-	}
-
-	return normalized, nil
 }
 
-func (s *Scene) shouldMixAudio() bool {
+func (s *RawStreamer) audioPassthroughIndex() int {
+	if index := s.audioMixPassthroughIndex(); index >= 0 {
+		return index
+	}
+	return s.cfg.audioPassthroughFrom
+}
+
+func (s *RawStreamer) audioPassthroughConfig() []byte {
+	index := s.audioPassthroughIndex()
+	if index < 0 || index >= len(s.runtimes) {
+		return nil
+	}
+	return inputAudioSpecificConfig(s.runtimes[index].spec.Stream)
+}
+
+func (s *RawStreamer) prepareOutputAudioFrame(frame *shared.Frame) *shared.Frame {
+	if frame == nil {
+		return nil
+	}
+
+	out := *frame
+	out.InputID = s.id
+	if len(frame.Payload) > 0 {
+		out.Payload = make([][]byte, 0, len(frame.Payload))
+		for _, payload := range frame.Payload {
+			out.Payload = append(out.Payload, append([]byte(nil), payload...))
+		}
+	}
+	return &out
+}
+
+func (s *RawStreamer) initAudioPassthroughTranscoder() error {
+	if s.audio.encoder != nil {
+		return nil
+	}
+
+	audioInput := make(chan *raw.AudioFrame, s.cfg.audioBuffer)
+	audioEncoder, err := encoder.NewAACEncoder(
+		s.id+"-audio-encoder",
+		audioInput,
+		encoder.WithAACEncoderOutputBuffer(s.cfg.audioBuffer),
+		encoder.WithAACEncoderTransport(encoder.AACTransportRaw),
+		encoder.WithAACEncoderSampleRate(mixedAudioSampleRate),
+		encoder.WithAACEncoderChannels(mixedAudioChannels),
+	)
+	if err != nil {
+		return err
+	}
+	if err := audioEncoder.Start(); err != nil {
+		return err
+	}
+
+	s.audio = audioEncoderRuntime{
+		input:   audioInput,
+		encoder: audioEncoder,
+	}
+
+	go s.consumeAudioEncoderOutput()
+	go s.consumeAudioEncoderErrors()
+	return nil
+}
+
+func (s *RawStreamer) enqueueLatestAudio(frame *shared.Frame) bool {
+	if frame == nil {
+		return true
+	}
+
+	for {
+		select {
+		case <-s.done:
+			return false
+		case s.audioChan <- frame:
+			s.totalAudioFrames++
+			s.touchLastIO()
+			select {
+			case <-s.started:
+			default:
+				close(s.started)
+			}
+			return true
+		default:
+		}
+
+		select {
+		case <-s.done:
+			return false
+		case <-s.audioChan:
+			s.droppedAudioFrames++
+		case <-time.After(250 * time.Millisecond):
+			s.droppedAudioFrames++
+			return false
+		}
+	}
+}
+
+func (s *RawStreamer) shouldMixAudio() bool {
 	return len(s.cfg.audioMixRatios) > 0 && s.audioMixPassthroughIndex() < 0
 }
 
-func (s *Scene) audioMixPassthroughIndex() int {
+func (s *RawStreamer) audioMixPassthroughIndex() int {
 	if len(s.cfg.audioMixRatios) == 0 {
 		return -1
 	}
@@ -75,7 +175,7 @@ func (s *Scene) audioMixPassthroughIndex() int {
 	return index
 }
 
-func (s *Scene) initAudioMixer() error {
+func (s *RawStreamer) initAudioMixer() error {
 	activeInputs := 0
 	for _, ratio := range s.cfg.audioMixRatios {
 		if ratio > 0 {
@@ -83,7 +183,7 @@ func (s *Scene) initAudioMixer() error {
 		}
 	}
 	if activeInputs == 0 {
-		return fmt.Errorf("scene audio mix requires at least one non-zero ratio")
+		return fmt.Errorf("raw streamer audio mix requires at least one non-zero ratio")
 	}
 
 	audioInput := make(chan *raw.AudioFrame, s.cfg.audioBuffer)
@@ -92,8 +192,8 @@ func (s *Scene) initAudioMixer() error {
 		audioInput,
 		encoder.WithAACEncoderOutputBuffer(s.cfg.audioBuffer),
 		encoder.WithAACEncoderTransport(encoder.AACTransportRaw),
-		encoder.WithAACEncoderSampleRate(sceneMixedAudioSampleRate),
-		encoder.WithAACEncoderChannels(sceneMixedAudioChannels),
+		encoder.WithAACEncoderSampleRate(mixedAudioSampleRate),
+		encoder.WithAACEncoderChannels(mixedAudioChannels),
 	)
 	if err != nil {
 		return err
@@ -107,11 +207,10 @@ func (s *Scene) initAudioMixer() error {
 		encoder: audioEncoder,
 	}
 	s.decodedAudio = make(chan decodedAudioFrame, max(1, activeInputs*s.cfg.audioBuffer))
-
 	return nil
 }
 
-func (s *Scene) consumeInputAudio(index int, rt *inputRuntime) {
+func (s *RawStreamer) consumeInputAudio(index int, rt *inputRuntime) {
 	if s.cfg.audioMixRatios[index] == 0 {
 		return
 	}
@@ -132,7 +231,7 @@ func (s *Scene) consumeInputAudio(index int, rt *inputRuntime) {
 				continue
 			}
 
-			transport := sceneAACTransport(frame.PacketType)
+			transport := rawStreamerAACTransport(frame.PacketType)
 			if err := s.ensureAudioDecoder(rt, transport); err != nil {
 				s.droppedAudioFrames++
 				continue
@@ -149,14 +248,14 @@ func (s *Scene) consumeInputAudio(index int, rt *inputRuntime) {
 	}
 }
 
-func (s *Scene) ensureAudioDecoder(rt *inputRuntime, transport decoder.AACTransport) error {
+func (s *RawStreamer) ensureAudioDecoder(rt *inputRuntime, transport decoder.AACTransport) error {
 	rt.audioDecoderMu.Lock()
 	defer rt.audioDecoderMu.Unlock()
 
 	if rt.audioDecoder != nil {
 		if rt.audioTransport != string(transport) {
 			return fmt.Errorf(
-				"scene audio input %s transport changed from %s to %s",
+				"raw streamer audio input %s transport changed from %s to %s",
 				rt.spec.Stream.GetID(),
 				rt.audioTransport,
 				transport,
@@ -171,11 +270,11 @@ func (s *Scene) ensureAudioDecoder(rt *inputRuntime, transport decoder.AACTransp
 		decoder.WithAACDecoderTransport(transport),
 	}
 	if transport == decoder.AACTransportRaw {
-		config := sceneInputAudioSpecificConfig(rt.spec.Stream)
+		config := inputAudioSpecificConfig(rt.spec.Stream)
 		if len(config) > 0 {
 			opts = append(opts, decoder.WithAACDecoderAudioSpecificConfig(config))
 		} else {
-			opts = append(opts, decoder.WithAACDecoderMPEG4AudioConfig(sceneMixedAudioSampleRate, sceneMixedAudioChannels))
+			opts = append(opts, decoder.WithAACDecoderMPEG4AudioConfig(mixedAudioSampleRate, mixedAudioChannels))
 		}
 	}
 
@@ -194,11 +293,10 @@ func (s *Scene) ensureAudioDecoder(rt *inputRuntime, transport decoder.AACTransp
 	rt.audioDecoder = audioDecoder
 	rt.audioTransport = string(transport)
 	go s.consumeDecodedAudio(rt)
-
 	return nil
 }
 
-func (s *Scene) consumeDecodedAudio(rt *inputRuntime) {
+func (s *RawStreamer) consumeDecodedAudio(rt *inputRuntime) {
 	index := -1
 	for i := range s.runtimes {
 		if s.runtimes[i] == rt {
@@ -229,6 +327,23 @@ func (s *Scene) consumeDecodedAudio(rt *inputRuntime) {
 				continue
 			}
 
+			if !s.shouldMixAudio() && index == s.audioPassthroughIndex() {
+				converted, err := prepareMixAudioFrame(frame)
+				if err != nil {
+					s.droppedAudioFrames++
+					continue
+				}
+
+				select {
+				case s.audio.input <- converted:
+				case <-s.done:
+					return
+				case <-time.After(250 * time.Millisecond):
+					s.droppedAudioFrames++
+				}
+				continue
+			}
+
 			select {
 			case s.decodedAudio <- decodedAudioFrame{index: index, frame: frame}:
 			case <-s.done:
@@ -240,10 +355,10 @@ func (s *Scene) consumeDecodedAudio(rt *inputRuntime) {
 	}
 }
 
-func (s *Scene) mixAudioLoop() {
-	samplesPerTick := sceneMixedAudioSamplesPerAU * sceneMixedAudioChannels
-	maxBufferedSamples := samplesPerTick * sceneMixedAudioMaxBacklogAU
-	frameDuration := time.Duration(sceneMixedAudioSamplesPerAU) * time.Second / time.Duration(sceneMixedAudioSampleRate)
+func (s *RawStreamer) mixAudioLoop() {
+	samplesPerTick := mixedAudioSamplesPerAU * mixedAudioChannels
+	maxBufferedSamples := samplesPerTick * mixedAudioMaxBacklogAU
+	frameDuration := time.Duration(mixedAudioSamplesPerAU) * time.Second / time.Duration(mixedAudioSampleRate)
 	ticker := time.NewTicker(frameDuration)
 	defer ticker.Stop()
 
@@ -262,7 +377,8 @@ func (s *Scene) mixAudioLoop() {
 			if decoded.frame == nil {
 				continue
 			}
-			mixFrame, err := prepareSceneMixAudioFrame(decoded.frame)
+
+			mixFrame, err := prepareMixAudioFrame(decoded.frame)
 			if err != nil {
 				s.droppedAudioFrames++
 				continue
@@ -276,6 +392,7 @@ func (s *Scene) mixAudioLoop() {
 			if len(samples) == 0 {
 				continue
 			}
+
 			buffers[decoded.index] = append(buffers[decoded.index], samples...)
 			if len(buffers[decoded.index]) > maxBufferedSamples {
 				drop := len(buffers[decoded.index]) - maxBufferedSamples
@@ -299,7 +416,7 @@ func (s *Scene) mixAudioLoop() {
 				s.id,
 				s.cfg.audioMixRatios,
 				buffers,
-				sceneMixedAudioSamplesPerAU,
+				mixedAudioSamplesPerAU,
 				nextPTS,
 				now,
 			)
@@ -316,35 +433,35 @@ func (s *Scene) mixAudioLoop() {
 	}
 }
 
-type sceneAudioConfigProvider interface {
+type audioConfigProvider interface {
 	AudioSpecificConfig() []byte
 }
 
-func sceneInputAudioSpecificConfig(stream shared.Stream) []byte {
+func inputAudioSpecificConfig(stream shared.Stream) []byte {
 	if stream == nil {
 		return nil
 	}
-	provider, ok := stream.(sceneAudioConfigProvider)
+	provider, ok := stream.(audioConfigProvider)
 	if !ok {
 		return nil
 	}
 	return provider.AudioSpecificConfig()
 }
 
-func prepareSceneMixAudioFrame(frame *raw.AudioFrame) (*raw.AudioFrame, error) {
+func prepareMixAudioFrame(frame *raw.AudioFrame) (*raw.AudioFrame, error) {
 	if frame == nil {
 		return nil, fmt.Errorf("raw audio frame is nil")
 	}
 	if frame.SampleFormat != raw.AudioCodecPCMS16LE {
-		return nil, fmt.Errorf("unsupported scene mix sample format %q", frame.SampleFormat)
+		return nil, fmt.Errorf("unsupported raw streamer mix sample format %q", frame.SampleFormat)
 	}
-	if frame.SampleRate == sceneMixedAudioSampleRate && frame.Channels == sceneMixedAudioChannels {
+	if frame.SampleRate == mixedAudioSampleRate && frame.Channels == mixedAudioChannels {
 		if err := frame.Validate(); err != nil {
 			return nil, err
 		}
 		return frame, nil
 	}
-	return raw.ConvertPCM16AudioFrame(frame, sceneMixedAudioSampleRate, sceneMixedAudioChannels)
+	return raw.ConvertPCM16AudioFrame(frame, mixedAudioSampleRate, mixedAudioChannels)
 }
 
 func hasBufferedMixedAudioSamples(ratios []int, buffers [][]int16, minSamples int) bool {
@@ -372,14 +489,14 @@ func decodePCM16Payload(payload []byte) ([]int16, error) {
 }
 
 func buildBufferedMixedPCM16AudioFrame(
-	sceneID string,
+	streamID string,
 	ratios []int,
 	buffers [][]int16,
 	samplesPerChannel int,
 	pts time.Duration,
 	timestamp time.Time,
 ) *raw.AudioFrame {
-	totalSamples := samplesPerChannel * sceneMixedAudioChannels
+	totalSamples := samplesPerChannel * mixedAudioChannels
 	accum := make([]int32, totalSamples)
 
 	for i, ratio := range ratios {
@@ -416,7 +533,7 @@ func buildBufferedMixedPCM16AudioFrame(
 		binary.LittleEndian.PutUint16(payload[i*2:], uint16(int16(mixed)))
 	}
 
-	duration := time.Duration(samplesPerChannel) * time.Second / time.Duration(sceneMixedAudioSampleRate)
+	duration := time.Duration(samplesPerChannel) * time.Second / time.Duration(mixedAudioSampleRate)
 	if timestamp.IsZero() {
 		timestamp = time.Now()
 	}
@@ -430,17 +547,17 @@ func buildBufferedMixedPCM16AudioFrame(
 			Codec:      raw.AudioCodecPCMS16LE,
 			PacketType: raw.AudioCodecPCMS16LE,
 			Timestamp:  timestamp,
-			InputID:    sceneID,
+			InputID:    streamID,
 			IsKeyFrame: true,
 		},
-		SampleRate:        sceneMixedAudioSampleRate,
-		Channels:          sceneMixedAudioChannels,
+		SampleRate:        mixedAudioSampleRate,
+		Channels:          mixedAudioChannels,
 		SampleFormat:      raw.AudioCodecPCMS16LE,
 		SamplesPerChannel: samplesPerChannel,
 	}
 }
 
-func (s *Scene) consumeAudioEncoderOutput() {
+func (s *RawStreamer) consumeAudioEncoderOutput() {
 	for {
 		select {
 		case <-s.done:
@@ -459,7 +576,7 @@ func (s *Scene) consumeAudioEncoderOutput() {
 	}
 }
 
-func (s *Scene) consumeAudioEncoderErrors() {
+func (s *RawStreamer) consumeAudioEncoderErrors() {
 	for {
 		select {
 		case <-s.done:
@@ -473,158 +590,7 @@ func (s *Scene) consumeAudioEncoderErrors() {
 	}
 }
 
-func nextMixedAudioTargetIndex(ratios []int, queues [][]*raw.AudioFrame) int {
-	targetIndex := -1
-	var targetPTS time.Duration
-
-	for i, ratio := range ratios {
-		if ratio == 0 || len(queues[i]) == 0 || queues[i][0] == nil || queues[i][0].Frame == nil {
-			continue
-		}
-		pts := queues[i][0].Frame.PTS
-		if targetIndex < 0 || pts < targetPTS {
-			targetIndex = i
-			targetPTS = pts
-		}
-	}
-
-	return targetIndex
-}
-
-func mixPCM16AudioFrames(sceneID string, ratios []int, frames []*raw.AudioFrame) (*raw.AudioFrame, error) {
-	if len(ratios) != len(frames) {
-		return nil, fmt.Errorf("audio ratio count %d does not match frame count %d", len(ratios), len(frames))
-	}
-
-	baseIndex := -1
-	for i, frame := range frames {
-		if ratios[i] == 0 || frame == nil {
-			continue
-		}
-		if !sceneAudioFrameMatchesMixFormat(frame) {
-			return nil, fmt.Errorf("audio frame %d does not match the scene mix format", i)
-		}
-		baseIndex = i
-		break
-	}
-	if baseIndex < 0 {
-		return nil, fmt.Errorf("no audio frames available for mixing")
-	}
-
-	base := frames[baseIndex]
-	basePayload := base.Frame.Payload[0]
-	accum := make([]int32, len(basePayload)/2)
-
-	for i, frame := range frames {
-		if ratios[i] == 0 || frame == nil {
-			continue
-		}
-		if !audioFramesCompatibleForMix(base, frame) {
-			return nil, fmt.Errorf("audio frame %d is not compatible with the mix reference frame", i)
-		}
-
-		payload := frame.Frame.Payload[0]
-		for offset := 0; offset < len(payload); offset += 2 {
-			sample := int16(binary.LittleEndian.Uint16(payload[offset : offset+2]))
-			accum[offset/2] += int32(sample) * int32(ratios[i])
-		}
-	}
-
-	outPayload := make([]byte, len(basePayload))
-	for i, sample := range accum {
-		mixed := sample / 100
-		if mixed > math.MaxInt16 {
-			mixed = math.MaxInt16
-		}
-		if mixed < math.MinInt16 {
-			mixed = math.MinInt16
-		}
-		binary.LittleEndian.PutUint16(outPayload[i*2:], uint16(int16(mixed)))
-	}
-
-	duration := base.Frame.Duration
-	if duration <= 0 && base.SamplesPerChannel > 0 && base.SampleRate > 0 {
-		duration = time.Duration(base.SamplesPerChannel) * time.Second / time.Duration(base.SampleRate)
-	}
-
-	timestamp := base.Frame.Timestamp
-	if timestamp.IsZero() {
-		timestamp = time.Now()
-	}
-
-	out := &raw.AudioFrame{
-		Frame: &shared.Frame{
-			PTS:        base.Frame.PTS,
-			DTS:        base.Frame.DTS,
-			Duration:   duration,
-			Payload:    [][]byte{outPayload},
-			Codec:      raw.AudioCodecPCMS16LE,
-			PacketType: raw.AudioCodecPCMS16LE,
-			Timestamp:  timestamp,
-			InputID:    sceneID,
-			IsKeyFrame: true,
-			GOPID:      base.Frame.GOPID,
-			SequenceID: base.Frame.SequenceID,
-			IsFile:     base.Frame.IsFile,
-		},
-		SampleRate:        base.SampleRate,
-		Channels:          base.Channels,
-		SampleFormat:      base.SampleFormat,
-		SamplesPerChannel: base.SamplesPerChannel,
-	}
-	if out.Frame.DTS == 0 {
-		out.Frame.DTS = out.Frame.PTS
-	}
-
-	return out, nil
-}
-
-func sceneAudioFrameMatchesMixFormat(frame *raw.AudioFrame) bool {
-	if frame == nil || frame.Frame == nil {
-		return false
-	}
-	if frame.SampleRate != sceneMixedAudioSampleRate || frame.Channels != sceneMixedAudioChannels {
-		return false
-	}
-	if frame.SampleFormat != raw.AudioCodecPCMS16LE {
-		return false
-	}
-	return frame.Validate() == nil
-}
-
-func audioFramesCompatibleForMix(base *raw.AudioFrame, candidate *raw.AudioFrame) bool {
-	if !sceneAudioFrameMatchesMixFormat(base) || !sceneAudioFrameMatchesMixFormat(candidate) {
-		return false
-	}
-	return base.SampleRate == candidate.SampleRate &&
-		base.Channels == candidate.Channels &&
-		base.SampleFormat == candidate.SampleFormat &&
-		base.SamplesPerChannel == candidate.SamplesPerChannel &&
-		len(base.Frame.Payload) == len(candidate.Frame.Payload) &&
-		len(base.Frame.Payload[0]) == len(candidate.Frame.Payload[0])
-}
-
-func audioMixTolerance(frame *raw.AudioFrame) time.Duration {
-	if frame == nil || frame.Frame == nil {
-		return 0
-	}
-	if frame.Frame.Duration > 0 {
-		return frame.Frame.Duration / 2
-	}
-	if frame.SamplesPerChannel > 0 && frame.SampleRate > 0 {
-		return time.Duration(frame.SamplesPerChannel) * time.Second / time.Duration(frame.SampleRate) / 2
-	}
-	return 15 * time.Millisecond
-}
-
-func absDuration(v time.Duration) time.Duration {
-	if v < 0 {
-		return -v
-	}
-	return v
-}
-
-func sceneAACTransport(packetType string) decoder.AACTransport {
+func rawStreamerAACTransport(packetType string) decoder.AACTransport {
 	switch strings.ToLower(strings.TrimSpace(packetType)) {
 	case string(decoder.AACTransportADTS):
 		return decoder.AACTransportADTS

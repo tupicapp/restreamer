@@ -28,6 +28,18 @@ static int iraj_swr_alloc_set_opts2_wrap(
 static int iraj_swr_get_out_samples_wrap(struct SwrContext *swr, int in_samples) {
 	return swr_get_out_samples(swr, in_samples);
 }
+
+static int iraj_swr_convert_interleaved_s16(
+	struct SwrContext *swr,
+	uint8_t *dst,
+	int dst_samples,
+	const uint8_t *src,
+	int src_samples
+) {
+	uint8_t *out_data[1] = { dst };
+	const uint8_t *in_data[1] = { src };
+	return swr_convert(swr, out_data, dst_samples, in_data, src_samples);
+}
 */
 import "C"
 
@@ -104,14 +116,12 @@ func ConvertPCM16AudioFrame(frame *AudioFrame, sampleRate int, channels int) (*A
 	outPayload := make([]byte, outSamplesCap*channels*2)
 	inData := (*C.uint8_t)(unsafe.Pointer(&frame.Frame.Payload[0][0]))
 	outData := (*C.uint8_t)(unsafe.Pointer(&outPayload[0]))
-	inSlice := []*C.uint8_t{inData}
-	outSlice := []*C.uint8_t{outData}
 
-	converted := C.swr_convert(
+	converted := C.iraj_swr_convert_interleaved_s16(
 		swrCtx,
-		(**C.uint8_t)(unsafe.Pointer(&outSlice[0])),
+		outData,
 		C.int(outSamplesCap),
-		(**C.uint8_t)(unsafe.Pointer(&inSlice[0])),
+		inData,
 		C.int(inSamples),
 	)
 	if converted < 0 {

@@ -16,6 +16,14 @@ func (f *fakeRTMPWriter) Write(frame *shared.Frame) error {
 	return nil
 }
 
+type fakeAudioConfigProvider struct {
+	config []byte
+}
+
+func (f fakeAudioConfigProvider) AudioSpecificConfig() []byte {
+	return append([]byte(nil), f.config...)
+}
+
 func TestWriteH264WaitsForCodecParams(t *testing.T) {
 	t.Parallel()
 
@@ -117,5 +125,42 @@ func TestWriteH264InitializesWriterFromKeyframeAndFlushesPendingAudio(t *testing
 	}
 	if len(rtmpOut.pendingAudio) != 0 {
 		t.Fatalf("expected pending audio queue to be empty after flush")
+	}
+}
+
+func TestQueuePendingAudioTracksSampleRate(t *testing.T) {
+	t.Parallel()
+
+	rtmpOut := &rtmpWriter{}
+	rtmpOut.queuePendingAudioLocked(&shared.Frame{
+		Codec:      "aac",
+		Payload:    [][]byte{{0x11, 0x22}},
+		SampleRate: 48000,
+	})
+
+	if rtmpOut.audioSampleRate != 48000 {
+		t.Fatalf("unexpected audio sample rate: got %d want 48000", rtmpOut.audioSampleRate)
+	}
+}
+
+func TestResolveAudioConfigLockedPrefersProviderConfig(t *testing.T) {
+	t.Parallel()
+
+	rtmpOut := &rtmpWriter{
+		audioSampleRate: 44100,
+		audioConfigProvider: fakeAudioConfigProvider{
+			config: []byte{0x11, 0x90}, // AAC-LC, 48kHz, stereo
+		},
+	}
+
+	conf := rtmpOut.resolveAudioConfigLocked()
+	if conf == nil {
+		t.Fatal("expected audio config, got nil")
+	}
+	if conf.SampleRate != 48000 {
+		t.Fatalf("unexpected sample rate: got %d want 48000", conf.SampleRate)
+	}
+	if conf.ChannelCount != 2 {
+		t.Fatalf("unexpected channel count: got %d want 2", conf.ChannelCount)
 	}
 }

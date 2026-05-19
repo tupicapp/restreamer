@@ -397,6 +397,7 @@ func (e *aacEncoder) buildOutputFrame(src *raw.AudioFrame) *shared.Frame {
 		InputID:    e.id,
 		IsKeyFrame: true,
 		SequenceID: e.sequenceID,
+		SampleRate: e.sampleRate,
 	}
 	if src != nil && src.Frame != nil {
 		out.PTS = src.Frame.PTS

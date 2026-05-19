@@ -10,7 +10,7 @@ HLS_LIVE_URL ?= https://live-hls-web-aja-fa.getaj.net/AJA/03.m3u8
 STREAMING_READY_RETRIES ?= 20
 STREAMING_READY_DELAY ?= 2
 
-.PHONY: lines create-video streaming-infra-ready streaming-infra-up irajstreamer-all-tests
+.PHONY: lines create-video streaming-infra-ready streaming-infra-up irajstreamer-all-tests go-media-run rawscene-example
 
 create-video:
 	@echo "==> Creating test video (output.mp4)..."
@@ -79,12 +79,29 @@ streaming-infra-up:
 	@export HLS_SERVER_URL=$(HLS_SERVER_URL)
 	@echo "==> streaming-infra-up: OK"
 
-irajstreamer-all-tests: 
+irajstreamer-all-tests:
 	@echo "==> Running irajstreamer tests (TestAll)..."
 	CGO_CFLAGS= CGO_CPPFLAGS= CGO_CXXFLAGS= CGO_LDFLAGS= CGO_FFLAGS= \
 	HLS_SERVER_URL=$(HLS_SERVER_URL) RTMP_URL=$(RTMP_URL) HLS_LIVE_URL=$(HLS_LIVE_URL) \
 		go test ./core/test -run TestAll -count=1 -v -timeout 30m
 	@echo "==> irajstreamer-all-tests: OK"
+
+go-media-run:
+	@test -n "$(ARGS)" || (echo "==> Usage: make -f MakeFile go-media-run ARGS='rawscene ...'" && exit 1)
+	CGO_CFLAGS= CGO_CPPFLAGS= CGO_CXXFLAGS= CGO_LDFLAGS= CGO_FFLAGS= \
+		go run -tags 'cgo media' main.go $(ARGS)
+
+rawscene-example:
+	CGO_CFLAGS= CGO_CPPFLAGS= CGO_CXXFLAGS= CGO_LDFLAGS= CGO_FFLAGS= \
+		go run -tags 'cgo media' main.go rawscene \
+			--stream-id raw-scene-1 \
+			-i rtmp://127.0.0.1:1938/live/1 --layout 0,0,640,360 \
+			-i rtmp://127.0.0.1:1938/live/1 --layout 640,0,640,360 \
+			-i rtmp://127.0.0.1:1938/live/1 --layout 0,360,640,360 \
+			-i rtmp://127.0.0.1:1938/live/1 --layout 640,360,640,360 \
+			--canvas 1280x720 \
+			-o rtmp://127.0.0.1:1938/live/out \
+			--audio-ratio 40 --audio-ratio 20 --audio-ratio 20 --audio-ratio 20
 
 lines:
 	find . -name "*.go" -type f -print0 | xargs -0 wc -l
