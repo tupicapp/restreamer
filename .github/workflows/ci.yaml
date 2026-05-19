@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    services:
+      rtmp:
+        image: bluenviron/mediamtx:1
+        ports:
+          - 1935:1935
+    env:
+      RTMP_BASE_URL: rtmp://127.0.0.1:1935/live/
+      RTMP_URL: rtmp://127.0.0.1:1935/live/1
+      RTMP_HOST: 127.0.0.1
+      RTMP_PORT: 1935
+      HLS_SERVER_URL: http://127.0.0.1:8091
+      HLS_LIVE_URL: https://live-hls-web-aja-fa.getaj.net/AJA/03.m3u8
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Start local streaming fixtures
+        run: make -f MakeFile streaming-infra-up
+
+      - name: Wait for streaming fixtures
+        run: make -f MakeFile streaming-infra-ready
+
+      - name: Run aggregated integration suite
+        run: make -f MakeFile irajstreamer-all-tests

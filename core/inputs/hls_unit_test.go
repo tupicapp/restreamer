@@ -78,3 +78,26 @@ func TestNormalizeHLSURI(t *testing.T) {
 		})
 	}
 }
+
+func TestHLSDownloadPlaylistFromFileURI(t *testing.T) {
+	tmpDir := t.TempDir()
+	playlistPath := filepath.Join(tmpDir, "playlist.m3u8")
+	want := []byte("#EXTM3U\n#EXT-X-VERSION:3\n")
+	if err := os.WriteFile(playlistPath, want, 0o644); err != nil {
+		t.Fatalf("failed to create playlist: %v", err)
+	}
+
+	reader, ok := NewHLS("unit-reader", playlistPath).(*hlsInput)
+	if !ok || reader == nil {
+		t.Fatal("expected hlsInput instance")
+	}
+
+	got, err := reader.downloadPlaylist(reader.baseURL.String())
+	if err != nil {
+		t.Fatalf("downloadPlaylist failed: %v", err)
+	}
+
+	if string(got) != string(want) {
+		t.Fatalf("downloadPlaylist returned %q, want %q", string(got), string(want))
+	}
+}

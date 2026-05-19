@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"runtime"
 	"sort"
 	"strings"
@@ -129,6 +130,7 @@ func NewHLS(id, uri string, opts ...HlsOption) Stream {
 
 func (r *hlsInput) GetVideoChan() chan *Frame      { return r.videoChan }
 func (r *hlsInput) RestartInterval() time.Duration { return 10 * time.Second }
+func (r *hlsInput) ShouldPauseWhenInactive() bool  { return true }
 
 func (r *hlsInput) GetAudioChan() chan *Frame { return r.audioChan }
 func (r *hlsInput) GetID() string             { return r.id }
@@ -313,16 +315,14 @@ func (r *hlsInput) playListUpdater() {
 	ticker := time.NewTicker(300 * time.Millisecond)
 	defer ticker.Stop()
 
-	err := r.updateMediaPlaylist()
-	if err != nil {
-		getLogger().Error("hls reader: failed to update media playlist", zap.String("stream_id", r.id), zap.Error(err))
-	}
-
 	for {
 		select {
 		case <-r.done:
 			return
 		case <-ticker.C:
+			if !r.IsStarted {
+				continue
+			}
 			err := r.updateMediaPlaylist()
 			if err != nil {
 				getLogger().Error("hls reader: failed to update media playlist", zap.String("stream_id", r.id), zap.Error(err))
@@ -456,6 +456,11 @@ func (r *hlsInput) drainAndForwardVideo() {
 		default:
 		}
 
+		if !r.IsStarted {
+			time.Sleep(5 * time.Millisecond)
+			continue
+		}
+
 		videoBuffer := r.popReadyVideo()
 		if len(videoBuffer) == 0 {
 			time.Sleep(5 * time.Millisecond)
@@ -481,6 +486,11 @@ func (r *hlsInput) drainAndForwardAudio() {
 		case <-r.done:
 			return
 		default:
+		}
+
+		if !r.IsStarted {
+			time.Sleep(5 * time.Millisecond)
+			continue
 		}
 
 		audioBuffer := r.popReadyAudio()
@@ -625,6 +635,19 @@ func (r *hlsInput) run() {
 }
 
 func (r *hlsInput) downloadPlaylist(uri string) ([]byte, error) {
+	if strings.HasPrefix(uri, "file://") {
+		path, err := fileURIToPath(uri)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve playlist file: %w", err)
+		}
+
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read playlist file: %w", err)
+		}
+		return data, nil
+	}
+
 	req, err := http.Get(uri)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download playlist: %w", err)

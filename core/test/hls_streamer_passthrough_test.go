@@ -13,7 +13,7 @@ import (
 )
 
 // TestHLSStreamerPassthrough tests HLS input → Streamer → HLS output passthrough,
-// comparing frame counts from ffprobe.
+// and verifies the output playlist matches the input playlist using ffprobe.
 func TestHLSStreamerPassthrough(t *testing.T) {
 	requireHTTPReachable(t, miladNobURL, 5*time.Second)
 
@@ -63,8 +63,6 @@ func TestHLSStreamerPassthrough(t *testing.T) {
 		t.Fatalf("hls dest failed to start: %v", err)
 	}
 
-	t.Log("HLS input and output started, collecting frames for 2s of inactivity...")
-
 	// Monitor for no frames timeout
 	lastFrameTime := time.Now()
 	noFrameTimeout := 2 * time.Second
@@ -72,10 +70,14 @@ func TestHLSStreamerPassthrough(t *testing.T) {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		// Check input state for activity (this is a simple check)
-		state := hlsInput.(interface{ State() *streaminputs.State }).State()
-		if state.LastIO.After(lastFrameTime) {
-			lastFrameTime = state.LastIO
+		inputState := hlsInput.State()
+		if inputState != nil && inputState.LastIO.After(lastFrameTime) {
+			lastFrameTime = inputState.LastIO
+		}
+
+		destState := hlsDest.State()
+		if destState != nil && destState.LastIO.After(lastFrameTime) {
+			lastFrameTime = destState.LastIO
 		}
 
 		if time.Since(lastFrameTime) > noFrameTimeout {
@@ -84,47 +86,58 @@ func TestHLSStreamerPassthrough(t *testing.T) {
 		}
 	}
 
-	t.Log("Closing streams...")
 	streamer.Close()
 
 	// Wait for writes to complete
-	time.Sleep(1 * time.Second)
+	time.Sleep(1500 * time.Millisecond)
 
-	// Get frame count from input using simple ffprobe
+	destState := hlsDest.State()
+	if destState != nil {
+		t.Logf("Video frames passed: %d", destState.TotalVideoFrames)
+		t.Logf("Audio frames passed: %d", destState.TotalAudioFrames)
+	}
+
 	inputPlaylist := miladNobURL
-	inputCount, err := getFFprobeFrameCount(inputPlaylist)
-	if err != nil {
-		t.Logf("Warning: could not get input frame count: %v", err)
-		return
-	}
-
-	// Get frame count from output using simple ffprobe
 	outputPlaylist := outDir + "stream.m3u8"
-	outputCount, err := getFFprobeFrameCount(outputPlaylist)
-	if err != nil {
-		t.Logf("Warning: could not get output frame count: %v", err)
-		return
+
+	hlsErr := EqualHLS(inputPlaylist, outputPlaylist)
+
+	if hlsErr.ProbeError1 != nil {
+		t.Errorf("ffprobe failed on input playlist: %v", hlsErr.ProbeError1)
+	}
+	if hlsErr.ProbeError2 != nil {
+		t.Errorf("ffprobe failed on output playlist: %v", hlsErr.ProbeError2)
 	}
 
-	t.Logf("Input ffprobe:  %d frames", inputCount)
-	t.Logf("Output ffprobe: %d frames", outputCount)
-
-	// Compare frame counts
-	maxDiffPercent := 10.0
-	diff := inputCount - outputCount
-	if diff < 0 {
-		diff = -diff
+	if hlsErr.StreamCountMismatch {
+		t.Errorf("Stream count mismatch: input=%d, output=%d",
+			hlsErr.StreamCount1, hlsErr.StreamCount2)
 	}
-	tolerance := inputCount * int(maxDiffPercent) / 100
-
-	if diff > tolerance {
-		t.Errorf("Frame count mismatch: input=%d, output=%d, diff=%d (tolerance=%d, %.1f%%)",
-			inputCount, outputCount, diff, tolerance, maxDiffPercent)
-	} else {
-		t.Logf("✓ Frame counts match (within %.1f%%)", maxDiffPercent)
+	for _, sd := range hlsErr.StreamDiffs {
+		t.Errorf("Stream[%d] %s mismatch: input=%q output=%q",
+			sd.Index, sd.Field, sd.Value1, sd.Value2)
 	}
 
-	// Calculate percentage match
-	percentMatch := float64(outputCount) / float64(inputCount) * 100.0
-	t.Logf("Output is %.1f%% of input", percentMatch)
+	if hlsErr.PacketCountMismatch {
+		t.Errorf("Packet count mismatch: video input=%d output=%d, audio input=%d output=%d",
+			hlsErr.VideoPacketCount1, hlsErr.VideoPacketCount2,
+			hlsErr.AudioPacketCount1, hlsErr.AudioPacketCount2)
+	}
+
+	countErrors := 0
+	errorPrints := 100
+	for _, pd := range hlsErr.PacketDiffs {
+		countErrors++
+		if pd.Field == "data" {
+			t.Errorf("Packet[%s #%d] %s mismatch",
+				pd.CodecType, pd.Index, pd.Field)
+			continue
+		}
+
+		t.Errorf("Packet[%s #%d] %s mismatch: input=%q output=%q",
+			pd.CodecType, pd.Index, pd.Field, pd.Value1, pd.Value2)
+		if countErrors >= errorPrints {
+			break
+		}
+	}
 }

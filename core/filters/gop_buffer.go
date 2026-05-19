@@ -275,7 +275,14 @@ func (g *GOPBuffer) runScheduler() {
 				if f == nil {
 					continue
 				}
-				heap.Push(&g.outHeap, rebasedFrame{f: f, orderTime: f.PTS})
+				orderTime := f.PTS
+				if isVideoCodec(f.Codec) {
+					orderTime = f.DTS
+					if orderTime == 0 {
+						orderTime = f.PTS
+					}
+				}
+				heap.Push(&g.outHeap, rebasedFrame{f: f, orderTime: orderTime})
 			}
 			g.outMu.Unlock()
 		}

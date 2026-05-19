@@ -26,14 +26,27 @@ func TestBuildSwitchSpec_ValidInputsAndOutputs(t *testing.T) {
 	}
 }
 
-func TestBuildSwitchSpec_RejectsSingleInput(t *testing.T) {
-	_, err := buildSwitchSpec(switchCommandOptions{
+func TestBuildSwitchSpec_AcceptsSingleInput(t *testing.T) {
+	spec, err := buildSwitchSpec(switchCommandOptions{
 		inputs:         []string{"rtmp://localhost/live/in1"},
 		outputs:        []string{"rtmp://localhost/live/out1"},
 		startupTimeout: 10 * time.Second,
 	}, nil)
+	if err != nil {
+		t.Fatalf("expected single input to be accepted, got error: %v", err)
+	}
+	if len(spec.inputURLs) != 1 {
+		t.Fatalf("expected 1 input, got %d", len(spec.inputURLs))
+	}
+}
+
+func TestBuildSwitchSpec_RejectsNoInputs(t *testing.T) {
+	_, err := buildSwitchSpec(switchCommandOptions{
+		outputs:        []string{"rtmp://localhost/live/out1"},
+		startupTimeout: 10 * time.Second,
+	}, nil)
 	if err == nil {
-		t.Fatal("expected error for one input")
+		t.Fatal("expected error for missing inputs")
 	}
 }
 

@@ -3,6 +3,8 @@ package inputs
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -129,6 +131,27 @@ func TestFetchSegmentData(t *testing.T) {
 
 		if _, err := fetchSegmentData(http.DefaultClient, server.URL, nil, nil); err == nil {
 			t.Fatal("expected error for non-200 response")
+		}
+	})
+
+	t.Run("file uri", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		segmentPath := filepath.Join(tmpDir, "seg.ts")
+		if err := os.WriteFile(segmentPath, data, 0o644); err != nil {
+			t.Fatalf("write segment file: %v", err)
+		}
+
+		uri, err := normalizeHLSURI(segmentPath)
+		if err != nil {
+			t.Fatalf("normalizeHLSURI failed: %v", err)
+		}
+
+		out, err := fetchSegmentData(http.DefaultClient, uri, uint64Ptr(2), uint64Ptr(3))
+		if err != nil {
+			t.Fatalf("fetchSegmentData(file) failed: %v", err)
+		}
+		if string(out) != "cde" {
+			t.Fatalf("unexpected output: %s", string(out))
 		}
 	})
 }

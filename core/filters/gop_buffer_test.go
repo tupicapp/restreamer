@@ -170,3 +170,56 @@ func TestGOPBuffer_VideoUsesDTSForOutputOrder(t *testing.T) {
 		t.Fatalf("video DTS order is not monotonic: %v, %v, %v", frames[0].DTS, frames[1].DTS, frames[2].DTS)
 	}
 }
+
+func TestTimelineRebaser_DoesNotReanchorContinuousStream(t *testing.T) {
+	r := NewTimelineRebaser()
+
+	var outs []*shared.Frame
+	for i := 0; i < 120; i++ {
+		pts := 100*time.Millisecond + time.Duration(i)*33*time.Millisecond
+		out := r.Process(mkVideo("A", int64(i+1), pts, i == 0))
+		outs = append(outs, out...)
+	}
+
+	if len(outs) != 120 {
+		t.Fatalf("expected 120 output frames, got %d", len(outs))
+	}
+
+	for i := 1; i < len(outs); i++ {
+		gotDelta := outs[i].PTS - outs[i-1].PTS
+		if gotDelta != 33*time.Millisecond {
+			t.Fatalf("frame %d delta changed in continuous stream: got %v want %v", i, gotDelta, 33*time.Millisecond)
+		}
+	}
+
+	wantEnd := time.Duration(119) * 33 * time.Millisecond
+	if outs[len(outs)-1].PTS != wantEnd {
+		t.Fatalf("continuous stream was unexpectedly re-anchored: got end %v want %v", outs[len(outs)-1].PTS, wantEnd)
+	}
+}
+
+func TestTimelineRebaser_ReanchorsRealSourceJump(t *testing.T) {
+	r := NewTimelineRebaser()
+
+	out1 := r.Process(mkVideo("A", 1, 100*time.Millisecond, true))
+	out2 := r.Process(mkVideo("A", 2, 133*time.Millisecond, false))
+	out3 := r.Process(mkVideo("A", 3, 10*time.Second, false))
+	out4 := r.Process(mkVideo("A", 4, 10033*time.Millisecond, false))
+
+	if len(out1) != 1 || len(out2) != 1 || len(out3) != 1 || len(out4) != 1 {
+		t.Fatalf("expected one output frame per input, got %d %d %d %d", len(out1), len(out2), len(out3), len(out4))
+	}
+
+	if out1[0].PTS != 0 {
+		t.Fatalf("expected first rebased frame at zero, got %v", out1[0].PTS)
+	}
+	if out2[0].PTS != 33*time.Millisecond {
+		t.Fatalf("expected second frame to continue normally, got %v", out2[0].PTS)
+	}
+	if out3[0].PTS != 66*time.Millisecond {
+		t.Fatalf("expected large source jump to re-anchor near continuity point, got %v", out3[0].PTS)
+	}
+	if out4[0].PTS != 99*time.Millisecond {
+		t.Fatalf("expected post-jump frame to continue from re-anchored base, got %v", out4[0].PTS)
+	}
+}

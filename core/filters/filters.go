@@ -517,16 +517,24 @@ type TimelineRebaser struct {
 	lastVideoDur time.Duration
 	lastAudioDur time.Duration
 
-	// Discontinuity handling: if source timestamps jump too far,
-	// re-anchor mapping to keep output continuous and avoid long pacing sleeps.
-	maxDeltaJump time.Duration
+	// Track the previous accepted source timestamps per track so continuity
+	// decisions are based on source gaps, not total elapsed stream time.
+	haveLastSourceVideoPTS bool
+	haveLastSourceAudioPTS bool
+	lastSourceVideoPTS     time.Duration
+	lastSourceAudioPTS     time.Duration
+
+	// Discontinuity handling: only re-anchor when the source itself jumps.
+	maxSourceForwardJump time.Duration
+	maxSourceBackwardGap time.Duration
 }
 
 func NewTimelineRebaser() *TimelineRebaser {
 	return &TimelineRebaser{
-		lastVideoDur: 33 * time.Millisecond,
-		lastAudioDur: 23 * time.Millisecond,
-		maxDeltaJump: 2 * time.Second,
+		lastVideoDur:         33 * time.Millisecond,
+		lastAudioDur:         23 * time.Millisecond,
+		maxSourceForwardJump: 2 * time.Second,
+		maxSourceBackwardGap: 500 * time.Millisecond,
 	}
 }
 
@@ -631,6 +639,8 @@ func (r *TimelineRebaser) Process(in *shared.Frame) []*shared.Frame {
 				r.outBasePTS = 0
 			}
 			r.haveMapping = true
+			r.haveLastSourceVideoPTS = false
+			r.haveLastSourceAudioPTS = false
 
 			// Reset GOP tracking for new input.
 			r.lastVideoKeySeq = 0
@@ -679,38 +689,30 @@ func (r *TimelineRebaser) rebaseOneLocked(f *shared.Frame) *shared.Frame {
 		origPTS = origDTS
 	}
 
-	delta := origPTS - r.origVideoBasePTS
-	// If the source timestamp goes backwards or jumps too far forward,
-	// re-anchor the mapping to keep output smooth and prevent long waits.
-	if delta < -500*time.Millisecond || delta > r.maxDeltaJump {
+	if r.shouldReanchorLocked(isVideo, isAudio, origPTS) {
 		step := r.lastVideoDur
 		if !isVideo {
-			// For pure-audio frames, use audio duration step.
 			step = r.lastAudioDur
 		}
 		if step <= 0 {
 			step = 33 * time.Millisecond
 		}
 
-		// Re-anchor so this frame lands shortly after the last emitted PTS.
 		r.origVideoBasePTS = origPTS
 		if r.lastOutPTS > 0 {
 			r.outBasePTS = r.lastOutPTS + step
 		} else {
 			r.outBasePTS = 0
 		}
-		delta = 0
 	}
+
+	delta := origPTS - r.origVideoBasePTS
 	if delta < 0 {
 		delta = 0
 	}
 
 	outPTS := r.outBasePTS + delta
 	if isVideo {
-		minStep := saneDur(f, r.lastVideoDur)
-		if outPTS < r.lastOutVideoPTS {
-			outPTS = r.lastOutVideoPTS + minStep
-		}
 		r.lastOutVideoPTS = outPTS
 	} else if isAudio {
 		minStep := saneDur(f, r.lastAudioDur)
@@ -772,6 +774,37 @@ func (r *TimelineRebaser) rebaseOneLocked(f *shared.Frame) *shared.Frame {
 	if f.PTS > r.lastOutPTS {
 		r.lastOutPTS = f.PTS
 	}
+	r.updateLastSourcePTSLocked(isVideo, isAudio, origPTS)
 
 	return f
+}
+
+func (r *TimelineRebaser) shouldReanchorLocked(isVideo, isAudio bool, origPTS time.Duration) bool {
+	if isVideo {
+		if !r.haveLastSourceVideoPTS {
+			return false
+		}
+		gap := origPTS - r.lastSourceVideoPTS
+		return gap < -r.maxSourceBackwardGap || gap > r.maxSourceForwardJump
+	}
+	if isAudio {
+		if !r.haveLastSourceAudioPTS {
+			return false
+		}
+		gap := origPTS - r.lastSourceAudioPTS
+		return gap < -r.maxSourceBackwardGap || gap > r.maxSourceForwardJump
+	}
+	return false
+}
+
+func (r *TimelineRebaser) updateLastSourcePTSLocked(isVideo, isAudio bool, origPTS time.Duration) {
+	if isVideo {
+		r.lastSourceVideoPTS = origPTS
+		r.haveLastSourceVideoPTS = true
+		return
+	}
+	if isAudio {
+		r.lastSourceAudioPTS = origPTS
+		r.haveLastSourceAudioPTS = true
+	}
 }

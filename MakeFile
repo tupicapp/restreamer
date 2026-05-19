@@ -4,8 +4,8 @@ RTMP_URL ?= $(RTMP_BASE_URL)$(RTMP_STREAM)
 RTMP_HOST ?= 127.0.0.1
 RTMP_PORT ?= 1938
 RTMP_PUBLISH_DIR ?= ./testdata/rtmp
-HLS_SERVER_URL ?= http://127.0.0.1:8090
-HLS_SERVER_PORT ?= 8090
+HLS_SERVER_URL ?= http://127.0.0.1:8091
+HLS_SERVER_PORT ?= 8091
 HLS_LIVE_URL ?= https://live-hls-web-aja-fa.getaj.net/AJA/03.m3u8
 STREAMING_READY_RETRIES ?= 20
 STREAMING_READY_DELAY ?= 2
@@ -26,7 +26,7 @@ streaming-infra-ready:
 	@echo "  ffmpeg: OK"
 	@command -v ffprobe >/dev/null 2>&1 || (echo "==> ERROR: ffprobe not found" && exit 1)
 	@echo "  ffprobe: OK"
-	@attempt=1; until curl -fsI $(HLS_SERVER_URL)/testdata/hls/ >/dev/null; do \
+	@attempt=1; until curl -fsI $(HLS_SERVER_URL)/testdata/stream.m3u8 >/dev/null; do \
 		if [ $$attempt -ge $(STREAMING_READY_RETRIES) ]; then \
 			echo "==> ERROR: HLS server not reachable: $(HLS_SERVER_URL)"; \
 			exit 1; \
@@ -52,7 +52,7 @@ streaming-infra-up:
 	@echo "==> Bringing up streaming infra..."
 	@command -v ffmpeg >/dev/null 2>&1 || (echo "==> ERROR: ffmpeg not found" && exit 1)
 	@command -v ffprobe >/dev/null 2>&1 || (echo "==> ERROR: ffprobe not found" && exit 1)
-	@curl -fsI $(HLS_SERVER_URL)/testdata/hls/ >/dev/null || (echo "  Starting HLS server on port $(HLS_SERVER_PORT)..." && nohup python3 -m http.server $(HLS_SERVER_PORT) --directory . </dev/null >>/tmp/hls_server.log 2>&1 & sleep 2)
+	@curl -fsI $(HLS_SERVER_URL)/testdata/stream.m3u8 >/dev/null || (echo "  Starting HLS server on port $(HLS_SERVER_PORT)..." && nohup python3 -m http.server $(HLS_SERVER_PORT) --directory . </dev/null >>/tmp/hls_server.log 2>&1 & sleep 2)
 	@echo "  HLS server: OK"
 	@attempt=1; until python3 -c "import socket; s=socket.create_connection(('$(RTMP_HOST)', $(RTMP_PORT)), 1); s.close()" >/dev/null 2>&1; do \
 		if [ $$attempt -ge $(STREAMING_READY_RETRIES) ]; then \
@@ -83,7 +83,7 @@ irajstreamer-all-tests:
 	@echo "==> Running irajstreamer tests (TestAll)..."
 	CGO_CFLAGS= CGO_CPPFLAGS= CGO_CXXFLAGS= CGO_LDFLAGS= CGO_FFLAGS= \
 	HLS_SERVER_URL=$(HLS_SERVER_URL) RTMP_URL=$(RTMP_URL) HLS_LIVE_URL=$(HLS_LIVE_URL) \
-		go test ./internal/irajstreamer -run TestAll -count=1  -v -timeout 3m
+		go test ./core/test -run TestAll -count=1 -v -timeout 30m
 	@echo "==> irajstreamer-all-tests: OK"
 
 lines:

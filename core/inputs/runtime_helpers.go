@@ -30,6 +30,10 @@ type streamManager struct {
 	events         *shared.EventEmitter
 }
 
+type pauseWhenInactiveCapable interface {
+	ShouldPauseWhenInactive() bool
+}
+
 func Manage(s Stream) Stream {
 	if s.IsRestartable() {
 		return &streamManager{
@@ -68,6 +72,14 @@ func (s *streamManager) EventChan() chan shared.Event {
 		return nil
 	}
 	return s.events.Chan()
+}
+
+func (s *streamManager) ShouldPauseWhenInactive() bool {
+	if s == nil || s.Stream == nil {
+		return false
+	}
+	capable, ok := s.Stream.(pauseWhenInactiveCapable)
+	return ok && capable.ShouldPauseWhenInactive()
 }
 
 func (s *streamManager) startWatch() {

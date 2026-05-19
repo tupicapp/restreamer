@@ -133,7 +133,9 @@ func New(id string, outputRoot any, opts ...Option) (*Recorder, error) {
 		id:              id,
 		url:             id,
 		outputRoot:      rootFolder,
-		gopBuffer:       filters.NewGOPBufferWithOptions(true, true, true, true, true),
+		// Recorder output must not drop stale frames, otherwise reference-frame
+		// loss can corrupt later packets inside the generated segments.
+		gopBuffer:       filters.NewGOPBufferWithOptions(true, true, true, true, false),
 		done:            make(chan struct{}),
 		Started:         make(chan struct{}),
 		segmentDuration: defaultSegmentDuration,

@@ -23,8 +23,8 @@ func mustListen(t *testing.T, addr string) net.Listener {
 	return ln
 }
 
-const miladNobURL = "http://localhost:8091/milad-nob/milad.m3u8"
-const aljaziraURL = "http://localhost:8091/milad-nob/milad.m3u8"
+const miladNobURL = "http://localhost:8091/testdata/stream.m3u8"
+const aljaziraURL = "https://live-hls-web-aja-fa.getaj.net/AJA/03.m3u8"
 
 // TestHLSLiveInputToHLSOutput_FramesMatch streams from a live HLS source through the
 // full input→streamer→HLS-output→re-read pipeline and verifies that the decoded

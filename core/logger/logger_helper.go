@@ -34,7 +34,7 @@ func getLogger() *zap.Logger {
 
 	logLevel := strings.TrimSpace(os.Getenv("LOGGER_LEVEL"))
 	if logLevel == "" {
-		logLevel = "info"
+		logLevel = "error"
 	}
 	timeFormat := strings.TrimSpace(os.Getenv("LOGGER_FORMAT"))
 	if timeFormat == "" {

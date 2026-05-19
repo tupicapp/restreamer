@@ -180,7 +180,10 @@ func NewHLSLiveDestination(id string, outputFolder any, opts ...HLSLiveOption) (
 		id:              id,
 		url:             id,
 		outputFolder:    folder,
-		gopBuffer:       filters.NewGOPBufferWithOptions(true, true, true, false, false),
+		// HLS output is a recording/segmenting sink. It must preserve decode
+		// dependencies across the GOP, so stale-frame dropping is disabled even
+		// when live inputs jitter.
+		gopBuffer:       filters.NewGOPBufferWithOptions(true, true, true, true, false),
 		done:            make(chan struct{}),
 		Started:         make(chan struct{}),
 		segmentDuration: defaultHLSSegmentDuration,
@@ -687,20 +690,7 @@ func (o *hlsLive) normalizeVideoTimestamps90k(pts, dts int64) (int64, int64) {
 	if pts < dts {
 		pts = dts
 	}
-
-	if !o.hasLastVideoPTS90k {
-		o.hasLastVideoPTS90k = true
-		o.lastVideoPTS90k = pts
-		return pts, dts
-	}
-
-	if pts <= o.lastVideoPTS90k {
-		pts = o.lastVideoPTS90k + 1
-		if pts < dts {
-			pts = dts
-		}
-	}
-
+	o.hasLastVideoPTS90k = true
 	o.lastVideoPTS90k = pts
 	return pts, dts
 }

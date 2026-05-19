@@ -18,8 +18,9 @@ go run irajstreamer/main.go switch \
 
 ## Assumptions
 
-- Switching requires at least two inputs, so `switch` validates `-i` count is `>= 2`.
+- `switch` accepts one or more inputs. With one input it behaves as a straight passthrough route; with multiple inputs it also opens the interactive switcher UI.
 - Outputs are real destination URLs and can be passed by `-o/--output` and/or as positional args.
 - A selected input is routed to all configured outputs (single active route at a time).
 - Stream protocol/type detection remains delegated to existing `streamfactory` behavior.
 - The live terminal switcher mechanism is intentionally copied into `switch.go` and not imported from the scene command helpers.
+- CI only validates the test suite. Version tags and GitHub releases are created manually when needed.

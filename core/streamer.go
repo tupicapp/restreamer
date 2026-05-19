@@ -61,6 +61,10 @@ type Streamer struct {
 	done      chan struct{}
 }
 
+type pauseWhenInactiveCapable interface {
+	ShouldPauseWhenInactive() bool
+}
+
 type StreamerOption func(*Streamer)
 
 type HLSConfig struct {
@@ -391,28 +395,15 @@ func (s *Streamer) switchInput(inputID string) {
 	s.inputsMu.Lock()
 	defer s.inputsMu.Unlock()
 
-	// input := s.inputs[inputID]
-
-	// audioLen := len(input.GetAudioChan())
-	// videoLen := len(input.GetVideoChan())
-
-	// wg := sync.WaitGroup{}
-	// wg.Add(1)
-	// go func() {
-	// 	defer wg.Done()
-	// 	for i := 0; i < audioLen; i++ {
-	// 		<-input.GetAudioChan()
-	// 	}
-	// }()
-	// wg.Add(1)
-	// go func() {
-	// 	defer wg.Done()
-	// 	for i := 0; i < videoLen; i++ {
-	// 		<-input.GetVideoChan()
-	// 	}
-	// }()
-	// wg.Wait()
-
+	prevInputID := s.activeInputID
+	if prevInputID != "" && prevInputID != inputID {
+		if prevInput, ok := s.inputs[prevInputID]; ok && shouldPauseWhenInactive(prevInput) {
+			prevInput.Stop()
+		}
+	}
+	if nextInput, ok := s.inputs[inputID]; ok && shouldPauseWhenInactive(nextInput) {
+		nextInput.Start()
+	}
 	s.activeInputID = inputID
 }
 
@@ -1365,7 +1356,9 @@ func (s *Streamer) upsertInputLocked(newInput Stream) error {
 
 		logger.GetLogger().Info("streamer: input updated", zap.String("input_id", newInput.GetID()))
 		managed := Manage(newInput)
-		managed.Start()
+		if s.shouldStartInputLocked(managed, newInput.GetID()) {
+			managed.Start()
+		}
 		s.inputs[newInput.GetID()] = managed
 		s.watchStream(managed)
 		s.emitEvent(shared.Event{
@@ -1389,7 +1382,9 @@ func (s *Streamer) upsertInputLocked(newInput Stream) error {
 
 	logger.GetLogger().Info("streamer: input added", zap.String("input_id", newInput.GetID()))
 	managed := Manage(newInput)
-	managed.Start()
+	if s.shouldStartInputLocked(managed, newInput.GetID()) {
+		managed.Start()
+	}
 	s.inputs[newInput.GetID()] = managed
 	s.watchStream(managed)
 	s.emitEvent(shared.Event{
@@ -1407,6 +1402,21 @@ func (s *Streamer) upsertInputLocked(newInput Stream) error {
 		},
 	})
 	return nil
+}
+
+func (s *Streamer) shouldStartInputLocked(stream Stream, inputID string) bool {
+	if !shouldPauseWhenInactive(stream) {
+		return true
+	}
+	return inputID == s.activeInputID || inputID == s.stagedInputID
+}
+
+func shouldPauseWhenInactive(stream Stream) bool {
+	if stream == nil {
+		return false
+	}
+	capable, ok := stream.(pauseWhenInactiveCapable)
+	return ok && capable.ShouldPauseWhenInactive()
 }
 
 func (s *Streamer) upsertOutputLocked(newOutput Stream) error {

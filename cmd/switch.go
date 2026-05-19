@@ -35,8 +35,8 @@ type switchBuildResult struct {
 
 func buildSwitchSpec(opts switchCommandOptions, extraOutputs []string) (switchBuildResult, error) {
 	allOutputs := append(opts.outputs, extraOutputs...)
-	if len(opts.inputs) < 2 {
-		return switchBuildResult{}, fmt.Errorf("at least two -i inputs are required for switching")
+	if len(opts.inputs) == 0 {
+		return switchBuildResult{}, fmt.Errorf("at least one -i input is required")
 	}
 	if len(allOutputs) == 0 {
 		return switchBuildResult{}, fmt.Errorf("at least one -o output is required")
@@ -80,9 +80,9 @@ type switchEntry struct {
 func NewSwitchCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:                "switch [global-flags] [stream-flags -i <url>]... [stream-flags -o <url>]...",
-		Short:              "Route multiple live inputs to one or more outputs with interactive switching",
+		Short:              "Route one or more live inputs to one or more outputs with optional switching",
 		DisableFlagParsing: true,
-		Long: "Start a passthrough router with multiple inputs and one or more outputs, then switch the active input live.\n\n" +
+		Long: "Start a passthrough router with one or more inputs and one or more outputs. When multiple inputs are provided, the active input can be switched live.\n\n" +
 			"Global flags (apply to the whole command):\n" +
 			"  --route-id <id>              Route stream ID prefix (default: route-1)\n" +
 			"  --startup-timeout <duration> Max time to wait for streams to start (default: 30s)\n\n" +
@@ -96,7 +96,8 @@ func NewSwitchCommand() *cobra.Command {
 			"    -i rtmp://127.0.0.1:1938/live/cam1 \\\n" +
 			"    -i rtmp://127.0.0.1:1938/live/cam2 \\\n" +
 			"    --live --segment-duration 4s -o ./hls/stream.m3u8 \\\n" +
-			"    -o rtmp://127.0.0.1:1938/live/out",
+			"    -o rtmp://127.0.0.1:1938/live/out\n\n" +
+			"With a single input, the command routes that input to all outputs until interrupted.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			for _, a := range args {
 				if a == "-h" || a == "--help" {
@@ -289,8 +290,8 @@ func validateSwitchSpec(spec switchSpec) error {
 	if spec.startupTimeout <= 0 {
 		return fmt.Errorf("--startup-timeout must be greater than zero")
 	}
-	if len(spec.inputs) < 2 {
-		return fmt.Errorf("at least two -i inputs are required for switching")
+	if len(spec.inputs) == 0 {
+		return fmt.Errorf("at least one -i input is required")
 	}
 	if len(spec.outputs) == 0 {
 		return fmt.Errorf("at least one -o output is required")
@@ -377,6 +378,11 @@ func runSwitchCommand(parent context.Context, spec switchSpec) error {
 		if err := output.WaitForStart(waitCtx); err != nil {
 			return fmt.Errorf("output %d failed to start: %w", idx+1, err)
 		}
+	}
+
+	if len(entries) == 1 {
+		<-ctx.Done()
+		return nil
 	}
 
 	return runRouteSwitcherTUI(ctx, entries, streamer, len(outputStreams))

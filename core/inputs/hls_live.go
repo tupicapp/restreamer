@@ -36,6 +36,10 @@ type hlsInputLive struct {
 	lastVideoPTS   time.Duration
 	lastAudioPTS   time.Duration
 
+	h264ParamMu sync.RWMutex
+	cachedSPS   []byte
+	cachedPPS   []byte
+
 	events *shared.EventEmitter
 }
 
@@ -176,12 +180,16 @@ func (r *hlsInputLive) runClient() error {
 				track := track
 				switch track.Codec.(type) {
 				case *ghlcodecs.H264:
+					h264Codec := track.Codec.(*ghlcodecs.H264)
+					r.setH264ParameterSets(h264Codec.SPS, h264Codec.PPS)
 					c.OnDataH26x(track, func(pts, dts int64, au [][]byte) {
 						r.onVideoFrame(pts, dts, au, "h264", track.ClockRate)
 					})
 					getLogger().Info("hls live: found H264 track",
 						zap.String("stream_id", r.id),
-						zap.Int("clock_rate", track.ClockRate))
+						zap.Int("clock_rate", track.ClockRate),
+						zap.Bool("has_sps", len(h264Codec.SPS) > 0),
+						zap.Bool("has_pps", len(h264Codec.PPS) > 0))
 
 				case *ghlcodecs.H265:
 					c.OnDataH26x(track, func(pts, dts int64, au [][]byte) {
@@ -258,6 +266,7 @@ func (r *hlsInputLive) runClient() error {
 func (r *hlsInputLive) onVideoFrame(pts, dts int64, au [][]byte, codec string, clockRate int) {
 	ptsD := time.Duration(pts) * time.Second / time.Duration(clockRate)
 	dtsD := time.Duration(dts) * time.Second / time.Duration(clockRate)
+	payload := cloneNALUs(au)
 
 	r.mu.Lock()
 	r.videoSeqID++
@@ -275,7 +284,7 @@ func (r *hlsInputLive) onVideoFrame(pts, dts int64, au [][]byte, codec string, c
 	frame := &Frame{
 		PTS:        ptsD,
 		DTS:        dtsD,
-		Payload:    au,
+		Payload:    payload,
 		Codec:      codec,
 		PacketType: classifyVideoPacketType(au, codec),
 		Timestamp:  time.Now(),
@@ -284,6 +293,13 @@ func (r *hlsInputLive) onVideoFrame(pts, dts int64, au [][]byte, codec string, c
 		Duration:   duration,
 	}
 	frame.IsKeyFrame = IsTsKeyFrame(frame)
+	if codec == "h264" {
+		r.updateH264ParameterSets(frame.Payload)
+		if frame.IsKeyFrame {
+			sps, pps := r.getH264ParameterSets()
+			frame.Payload = h264EnsureSPSPPSOnKeyFrame(frame.Payload, true, sps, pps)
+		}
+	}
 
 	if frame.IsKeyFrame {
 		r.mu.Lock()
@@ -356,6 +372,39 @@ func (r *hlsInputLive) onAudioFrames(pts int64, payloads [][]byte, codec string,
 				zap.Int64("seq", seqID))
 		}
 	}
+}
+
+func (r *hlsInputLive) setH264ParameterSets(sps, pps []byte) {
+	r.h264ParamMu.Lock()
+	defer r.h264ParamMu.Unlock()
+
+	if len(sps) > 0 {
+		r.cachedSPS = cloneBytes(sps)
+	}
+	if len(pps) > 0 {
+		r.cachedPPS = cloneBytes(pps)
+	}
+}
+
+func (r *hlsInputLive) updateH264ParameterSets(nalus [][]byte) {
+	sps, pps := h264ExtractSPSPPS(nalus)
+
+	r.h264ParamMu.Lock()
+	defer r.h264ParamMu.Unlock()
+
+	if len(sps) > 0 {
+		r.cachedSPS = sps
+	}
+	if len(pps) > 0 {
+		r.cachedPPS = pps
+	}
+}
+
+func (r *hlsInputLive) getH264ParameterSets() ([]byte, []byte) {
+	r.h264ParamMu.RLock()
+	defer r.h264ParamMu.RUnlock()
+
+	return cloneBytes(r.cachedSPS), cloneBytes(r.cachedPPS)
 }
 
 func (r *hlsInputLive) signalStarted() {
