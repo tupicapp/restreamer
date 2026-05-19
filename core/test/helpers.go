@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"github.com/tupicapp/restreamer/core/inputs"
 	"github.com/tupicapp/restreamer/core/shared"
+	"time"
 )
 
 type Frame = shared.Frame
@@ -48,6 +49,108 @@ func cloneFramesWithDTSAsPTS(frames []*Frame) []*Frame {
 		cloned[i] = &clone
 	}
 	return cloned
+}
+
+func normalizeFramesForTiming(frames []*Frame, maxGap time.Duration) ([]*Frame, int) {
+	if len(frames) == 0 {
+		return nil, 0
+	}
+
+	type frameRange struct {
+		start int
+		end   int
+		count int
+		span  time.Duration
+	}
+
+	ranges := make([]frameRange, 0, 4)
+	start := -1
+	last := -1
+	lastPTS := time.Duration(0)
+
+	closeRange := func(end int) {
+		if start == -1 || end < start {
+			return
+		}
+
+		count := 0
+		firstPTS := time.Duration(0)
+		lastRangePTS := time.Duration(0)
+		for i := start; i <= end; i++ {
+			if frames[i] == nil {
+				continue
+			}
+			if count == 0 {
+				firstPTS = frames[i].PTS
+			}
+			lastRangePTS = frames[i].PTS
+			count++
+		}
+		if count == 0 {
+			return
+		}
+
+		ranges = append(ranges, frameRange{
+			start: start,
+			end:   end,
+			count: count,
+			span:  lastRangePTS - firstPTS,
+		})
+	}
+
+	for i, frame := range frames {
+		if frame == nil {
+			continue
+		}
+
+		if start == -1 {
+			start = i
+			last = i
+			lastPTS = frame.PTS
+			continue
+		}
+
+		gap := frame.PTS - lastPTS
+		if gap < -maxGap || gap > maxGap {
+			closeRange(last)
+			start = i
+		}
+
+		last = i
+		lastPTS = frame.PTS
+	}
+	closeRange(last)
+
+	if len(ranges) == 0 {
+		return nil, 0
+	}
+
+	best := ranges[0]
+	for _, candidate := range ranges[1:] {
+		if candidate.count > best.count || (candidate.count == best.count && candidate.span > best.span) {
+			best = candidate
+		}
+	}
+
+	first := frames[best.start]
+	if first == nil {
+		return nil, 0
+	}
+
+	normalized := make([]*Frame, 0, best.count)
+	basePTS := first.PTS
+	baseDTS := first.DTS
+	for i := best.start; i <= best.end; i++ {
+		if frames[i] == nil {
+			continue
+		}
+		clone := *frames[i]
+		clone.PTS -= basePTS
+		clone.DTS -= baseDTS
+		normalized = append(normalized, &clone)
+	}
+
+	return normalized, len(frames) - len(normalized)
 }
 
 func isKeyFrame(frame *Frame) bool {

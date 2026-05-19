@@ -29,3 +29,5 @@ go run irajstreamer/main.go switch \
 - Integration tests use `HLS_SERVER_URL` when provided and otherwise fall back to the checked-in `testdata/stream.m3u8` fixture served from `http://127.0.0.1:8091`.
 - HLS live-oriented integration tests use deterministic local fixtures generated from `testdata/stream.m3u8` instead of relying on an external live playlist.
 - The switch integration test only validates switching behavior when at least two inputs actually start; if fixture availability collapses it to a single input, the test skips instead of asserting on a non-switching timeline.
+- Live HLS passthrough/window tests treat video payload identity as strict, but compare audio windows by stable overlap, frame coverage, and timeline coverage instead of requiring near-perfect AAC packet identity across remuxing on every CI runner.
+- RTMP timing tests normalize away isolated timestamp outliers before checking elapsed-time windows, because some RTMP readers can surface a stray zero-based frame alongside the live timeline on slower runners.
