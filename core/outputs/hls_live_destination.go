@@ -180,7 +180,7 @@ func NewHLSLiveDestination(id string, outputFolder any, opts ...HLSLiveOption) (
 		id:              id,
 		url:             id,
 		outputFolder:    folder,
-		gopBuffer:       filters.NewGOPBufferWithOptions(true, true, true, true, true),
+		gopBuffer:       filters.NewGOPBufferWithOptions(true, true, true, false, false),
 		done:            make(chan struct{}),
 		Started:         make(chan struct{}),
 		segmentDuration: defaultHLSSegmentDuration,
