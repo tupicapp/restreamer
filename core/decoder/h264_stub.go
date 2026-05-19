@@ -5,7 +5,7 @@ package decoder
 import (
 	"fmt"
 
-	shared "restreamer/core/shared"
+	shared "github.com/tupicapp/restreamer/core/shared"
 )
 
 func NewH264Decoder(_ string, _ <-chan *shared.Frame, _ ...H264DecoderOption) (VideoDecoder, error) {

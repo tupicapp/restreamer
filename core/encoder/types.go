@@ -1,6 +1,6 @@
 package encoder
 
-import shared "restreamer/core/shared"
+import shared "github.com/tupicapp/restreamer/core/shared"
 
 type VideoEncoder interface {
 	Start() error

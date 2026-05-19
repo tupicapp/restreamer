@@ -2,13 +2,10 @@ package test
 
 import (
 	"context"
-	"net/http"
-	"net/http/httptest"
-	"os"
+	streaminputs "github.com/tupicapp/restreamer/core/inputs"
+	"github.com/tupicapp/restreamer/core/outputs"
+	"github.com/tupicapp/restreamer/core/storage"
 	"path/filepath"
-	streaminputs "restreamer/core/inputs"
-	"restreamer/core/outputs"
-	"restreamer/core/storage"
 	"testing"
 	"time"
 )
@@ -17,27 +14,10 @@ import (
 // source, runs the direct HLSLive -> HLS output path against that frozen window,
 // and verifies the output matches the same reference window.
 func TestDirectHLSLivePassthrough(t *testing.T) {
-	liveSourceURL := getMixedTestLiveURL()
-	requireOrSkipHTTPReachable(t, liveSourceURL, 20*time.Second)
+	normalizedURL, normalizedPath, cleanup := setupDeterministicLiveFixtureServer(t, 15*time.Second)
+	defer cleanup()
 
-	workDir := "./tests"
-	snapshotDir := filepath.Join(workDir, "snapshot")
-	normalizedDir := filepath.Join(workDir, "normalized")
-	outDir := filepath.Join(workDir, "output")
-	for _, dir := range []string{snapshotDir, normalizedDir, outDir} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatalf("mkdir %s: %v", dir, err)
-		}
-	}
-
-	snapshotPath := snapshotLiveHLSFixture(t, liveSourceURL, 8*time.Second, snapshotDir)
-	makeHLSFixture(t, snapshotPath, 0, 15*time.Second, normalizedDir)
-	normalizedPath := filepath.Join(normalizedDir, "stream.m3u8")
-
-	fileServer := httptest.NewServer(http.FileServer(http.Dir(workDir)))
-	defer fileServer.Close()
-
-	normalizedURL := fileServer.URL + "/normalized/stream.m3u8"
+	outDir := filepath.Join(t.TempDir(), "output")
 	testDirectHLSLivePassthroughWithSnapshot(t, normalizedURL, normalizedPath, outDir)
 }
 

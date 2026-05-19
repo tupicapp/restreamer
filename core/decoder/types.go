@@ -1,6 +1,6 @@
 package decoder
 
-import "restreamer/core/raw"
+import "github.com/tupicapp/restreamer/core/raw"
 
 type VideoDecoder interface {
 	Start() error

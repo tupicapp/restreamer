@@ -3,10 +3,10 @@ package filters
 import (
 	"container/heap"
 	"fmt"
+	"github.com/tupicapp/restreamer/core/shared"
 	"io"
 	"net/url"
 	"path/filepath"
-	"restreamer/core/shared"
 	"strings"
 	"sync"
 	"time"

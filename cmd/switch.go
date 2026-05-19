@@ -11,8 +11,8 @@ import (
 	"syscall"
 	"time"
 
-	core "restreamer/core"
-	"restreamer/core/streamfactory"
+	core "github.com/tupicapp/restreamer/core"
+	"github.com/tupicapp/restreamer/core/streamfactory"
 
 	"github.com/spf13/cobra"
 )

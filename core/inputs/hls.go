@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	shared "restreamer/core/shared"
+	shared "github.com/tupicapp/restreamer/core/shared"
 
 	"github.com/bluenviron/gohlslib/v2/pkg/playlist"
 	"go.uber.org/zap"

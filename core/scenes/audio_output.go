@@ -3,7 +3,7 @@ package scenes
 import (
 	"time"
 
-	shared "restreamer/core/shared"
+	shared "github.com/tupicapp/restreamer/core/shared"
 )
 
 func (s *Scene) consumeAudio() {

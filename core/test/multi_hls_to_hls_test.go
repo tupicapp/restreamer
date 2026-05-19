@@ -3,6 +3,11 @@ package test
 import (
 	"context"
 	"fmt"
+	core "github.com/tupicapp/restreamer/core"
+	streaminputs "github.com/tupicapp/restreamer/core/inputs"
+	"github.com/tupicapp/restreamer/core/outputs"
+	"github.com/tupicapp/restreamer/core/storage"
+	testtools "github.com/tupicapp/restreamer/core/test_tools"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,18 +15,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	core "restreamer/core"
-	streaminputs "restreamer/core/inputs"
-	"restreamer/core/outputs"
-	"restreamer/core/storage"
-	testtools "restreamer/core/test_tools"
 	"testing"
 	"time"
 
 	"github.com/bluenviron/gohlslib/v2/pkg/playlist"
 )
-
-const fallbackAlJazeeraLiveURL = "https://live-hls-web-aja-fa.getaj.net/AJA/03.m3u8"
 
 // TestMultiHLSToHLS_WindowSwitchesMatchReference verifies deterministic window switching:
 // 0-5s from input1, 5-10s from input2, 10-15s from input3.
@@ -91,9 +89,6 @@ func TestMultiHLSToHLS_WindowSwitchesMatchReference(t *testing.T) {
 func TestMultiHLSToHLS_MixedFileAndLiveWindowSwitchesMatchReference(t *testing.T) {
 	requireBinary(t, "ffmpeg")
 
-	liveSourceURL := getMixedTestLiveURL()
-	requireOrSkipHTTPReachable(t, liveSourceURL, 20*time.Second)
-
 	sourcePlaylist := filepath.Join(findTestdataDirForTests(), "stream.m3u8")
 	if _, err := os.Stat(sourcePlaylist); err != nil {
 		t.Fatalf("source playlist not found: %v", err)
@@ -111,16 +106,18 @@ func TestMultiHLSToHLS_MixedFileAndLiveWindowSwitchesMatchReference(t *testing.T
 		}
 	}
 
-	liveSnapshotPath := snapshotLiveHLSFixture(t, liveSourceURL, 8*time.Second, liveDir)
-	makeHLSFixture(t, liveSnapshotPath, 0, 15*time.Second, liveNormalizedDir)
-	liveFixturePath := filepath.Join(liveNormalizedDir, "stream.m3u8")
+	liveInputURL, liveFixturePath, cleanup := setupDeterministicLiveFixtureServer(t, 15*time.Second)
+	defer cleanup()
+
+	if err := copyDirContents(liveDir, filepath.Dir(liveFixturePath)); err != nil {
+		t.Fatalf("copy deterministic live fixture: %v", err)
+	}
 	makeHLSFixture(t, sourcePlaylist, 0, 15*time.Second, input1Dir)
 	makeHLSFixture(t, sourcePlaylist, 5*time.Second, 15*time.Second, input2Dir)
 
 	fileServer := httptest.NewServer(http.FileServer(http.Dir(workDir)))
 	defer fileServer.Close()
 
-	liveInputURL := fileServer.URL + "/live_normalized/stream.m3u8"
 	input1URL := filepath.Join(input1Dir, "stream.m3u8")
 	input2URL := filepath.Join(input2Dir, "stream.m3u8")
 	outputURL := filepath.Join(outDir, "stream.m3u8")
@@ -674,32 +671,52 @@ func playlistTypePtr(v playlist.MediaPlaylistType) *playlist.MediaPlaylistType {
 	return &v
 }
 
-func getMixedTestLiveURL() string {
-	if url := os.Getenv("HLS_LIVE_URL"); url != "" {
-		return url
-	}
-	return fallbackAlJazeeraLiveURL
-}
-
-func requireOrSkipHTTPReachable(t *testing.T, rawURL string, timeout time.Duration) {
+func setupDeterministicLiveFixtureServer(t *testing.T, duration time.Duration) (string, string, func()) {
 	t.Helper()
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
+	sourcePlaylist := filepath.Join(findTestdataDirForTests(), "stream.m3u8")
+	if _, err := os.Stat(sourcePlaylist); err != nil {
+		t.Fatalf("source playlist not found: %v", err)
+	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	workDir := t.TempDir()
+	liveDir := filepath.Join(workDir, "live")
+	if err := os.MkdirAll(liveDir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", liveDir, err)
+	}
+
+	makeHLSFixture(t, sourcePlaylist, 0, duration, liveDir)
+
+	fileServer := httptest.NewServer(http.FileServer(http.Dir(workDir)))
+	cleanup := func() {
+		fileServer.Close()
+	}
+
+	return fileServer.URL + "/live/stream.m3u8", filepath.Join(liveDir, "stream.m3u8"), cleanup
+}
+
+func copyDirContents(srcDir, dstDir string) error {
+	entries, err := os.ReadDir(srcDir)
 	if err != nil {
-		t.Skipf("skipping external live test, invalid url %s: %v", rawURL, err)
+		return err
 	}
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Skipf("skipping external live test, url %s not reachable: %v", rawURL, err)
-		return
-	}
-	defer resp.Body.Close()
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
-		t.Skipf("skipping external live test, url %s returned status %d", rawURL, resp.StatusCode)
+		srcPath := filepath.Join(srcDir, entry.Name())
+		dstPath := filepath.Join(dstDir, entry.Name())
+
+		data, err := os.ReadFile(srcPath)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(dstPath, data, 0o644); err != nil {
+			return err
+		}
 	}
+
+	return nil
 }

@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	filters "restreamer/core/filters"
-	"restreamer/core/shared"
+	filters "github.com/tupicapp/restreamer/core/filters"
+	"github.com/tupicapp/restreamer/core/shared"
 
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/mpeg4audio"
 	mediats "github.com/bluenviron/mediacommon/v2/pkg/formats/mpegts"
@@ -177,9 +177,9 @@ func NewHLSLiveDestination(id string, outputFolder any, opts ...HLSLiveOption) (
 	}
 
 	dest := &hlsLive{
-		id:              id,
-		url:             id,
-		outputFolder:    folder,
+		id:           id,
+		url:          id,
+		outputFolder: folder,
 		// HLS output is a recording/segmenting sink. It must preserve decode
 		// dependencies across the GOP, so stale-frame dropping is disabled even
 		// when live inputs jitter.

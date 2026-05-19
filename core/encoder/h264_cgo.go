@@ -26,8 +26,8 @@ import (
 	"time"
 	"unsafe"
 
-	"restreamer/core/raw"
-	shared "restreamer/core/shared"
+	"github.com/tupicapp/restreamer/core/raw"
+	shared "github.com/tupicapp/restreamer/core/shared"
 )
 
 type h264Encoder struct {

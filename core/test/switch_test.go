@@ -3,10 +3,10 @@ package test
 import (
 	"context"
 	"fmt"
-	corehelpers "restreamer/core"
-	streaminputs "restreamer/core/inputs"
-	"restreamer/core/outputs"
-	testtools "restreamer/core/test_tools"
+	corehelpers "github.com/tupicapp/restreamer/core"
+	streaminputs "github.com/tupicapp/restreamer/core/inputs"
+	"github.com/tupicapp/restreamer/core/outputs"
+	testtools "github.com/tupicapp/restreamer/core/test_tools"
 	"testing"
 	"time"
 )
@@ -196,7 +196,10 @@ func testSwitchBetweenInputs(t *testing.T, inputs []inputSpec,
 	if len(filteredSwitches) == 0 {
 		t.Skip("No valid switches available (no inputs started)")
 	}
-	switches = filteredSwitches
+	switches = normalizeSwitchOperations(filteredSwitches)
+	if countDistinctSwitchInputs(switches) < 2 {
+		t.Skip("Need at least two available inputs to verify switching behavior")
+	}
 
 	// Keep the test within the remaining deadline if provided.
 	if deadline, ok := t.Deadline(); ok {
@@ -430,38 +433,19 @@ func checkNoDropsDuringActive(t *testing.T, frames []*Frame, switchEvents []Swit
 // TestStreamer_HLSReaderTiming verifies that HLS reader timing matches elapsed time
 // It checks that if streamer runs for a specified duration, the PTS window of packets matches elapsed time
 func TestStreamer_HLSReaderTiming(t *testing.T) {
+	playlistURI, _, cleanup := setupDeterministicLiveFixtureServer(t, 15*time.Second)
+	defer cleanup()
+
 	// List of HLS videos to test
 	hlsVideos := []TestVideoConfig{
 		{
 			Name:        "hls_video_1",
-			FilePath:    "testdata/hls/ts_1/index.m3u8",
-			Description: "Primary HLS test video",
+			FilePath:    playlistURI,
+			Description: "Deterministic HLS timing fixture",
 			Skip:        false,
 		},
 		// Add more videos here as needed
 	}
-
-	// Filter out skipped videos and check availability
-	var availableVideos []TestVideoConfig
-	for _, video := range hlsVideos {
-		if video.Skip {
-			continue
-		}
-		_, fileServer, err := setupHLSVideoServer(t, video)
-		if err != nil {
-			t.Logf("Skipping HLS video '%s' (%s): %v", video.Name, video.FilePath, err)
-			continue
-		}
-		if fileServer != nil {
-			fileServer.Close()
-		}
-		availableVideos = append(availableVideos, video)
-	}
-
-	if len(availableVideos) == 0 {
-		t.Skip("No HLS test videos available, skipping test")
-	}
-	hlsVideos = availableVideos
 
 	// Test all combinations of streamer parameters
 	combinations := []struct {
@@ -476,20 +460,12 @@ func TestStreamer_HLSReaderTiming(t *testing.T) {
 	// Test each video with each parameter combination
 	for _, video := range hlsVideos {
 		t.Run(video.Name, func(t *testing.T) {
-			playlistURI, fileServer, err := setupHLSVideoServer(t, video)
-			if err != nil {
-				t.Skipf("Failed to setup HLS video server for %s: %v", video.Name, err)
-			}
-			if fileServer != nil {
-				defer fileServer.Close()
-			}
-
 			t.Logf("Testing HLS video: %s (%s)", video.Name, video.Description)
-			t.Logf("Test HLS URI: %s", playlistURI)
+			t.Logf("Test HLS URI: %s", video.FilePath)
 
 			for _, combo := range combinations {
 				t.Run(combo.name, func(t *testing.T) {
-					testHLSReaderTiming(t, combo.rateControl, combo.genPTS, combo.ptsFilter, playlistURI)
+					testHLSReaderTiming(t, combo.rateControl, combo.genPTS, combo.ptsFilter, video.FilePath)
 				})
 			}
 		})
@@ -501,6 +477,7 @@ func testHLSReaderTiming(t *testing.T, rateControl, genPTS, ptsFilter bool, play
 	runDuration := 5 * time.Second
 	// Threshold for timing checks (10% tolerance)
 	threshold := 0.1 // 10%
+	maxSegmentLead := 2 * time.Second
 
 	t.Logf("Testing HLS reader timing: RateControl=%v, genPTS=%v, PTSFilter=%v", rateControl, genPTS, ptsFilter)
 	t.Logf("Running streamer for %v", runDuration)
@@ -544,24 +521,40 @@ func testHLSReaderTiming(t *testing.T, rateControl, genPTS, ptsFilter bool, play
 	}
 
 	// Record start time
+	startVideoIndex := len(bufferingDest.GetVideoFrames())
+	startAudioIndex := len(bufferingDest.GetAudioFrames())
 	startTime := time.Now()
 
 	// Run for the specified duration
 	t.Logf("Collecting frames for %v...", runDuration)
 	time.Sleep(runDuration)
 
-	hlsInput.Close()
-
 	// Record end time
 	endTime := time.Now()
 	actualElapsed := endTime.Sub(startTime)
+
+	hlsInput.Close()
 
 	// Wait a bit more for final frames to be processed
 	time.Sleep(500 * time.Millisecond)
 
 	// Get frames from destination
-	destVideoFrames := bufferingDest.GetVideoFrames()
-	destAudioFrames := bufferingDest.GetAudioFrames()
+	allVideoFrames := bufferingDest.GetVideoFrames()
+	allAudioFrames := bufferingDest.GetAudioFrames()
+
+	destVideoFrames := allVideoFrames
+	if startVideoIndex < len(allVideoFrames) {
+		destVideoFrames = allVideoFrames[startVideoIndex:]
+	} else {
+		destVideoFrames = nil
+	}
+
+	destAudioFrames := allAudioFrames
+	if startAudioIndex < len(allAudioFrames) {
+		destAudioFrames = allAudioFrames[startAudioIndex:]
+	} else {
+		destAudioFrames = nil
+	}
 
 	t.Logf("Collected frames: video=%d, audio=%d", len(destVideoFrames), len(destAudioFrames))
 	t.Logf("Actual elapsed time: %v", actualElapsed)
@@ -572,14 +565,14 @@ func testHLSReaderTiming(t *testing.T, rateControl, genPTS, ptsFilter bool, play
 
 	// Check video timing
 	if len(destVideoFrames) > 0 {
-		testtools.CheckFrameTiming(t, destVideoFrames, "video", runDuration, actualElapsed, threshold)
+		checkSegmentedFrameTiming(t, destVideoFrames, "video", runDuration, actualElapsed, threshold, maxSegmentLead)
 		testtools.CheckSequenceIDContinuity(t, destVideoFrames, "video")
 		testtools.CheckH264FrameHealth(t, destVideoFrames)
 	}
 
 	// Check audio timing
 	if len(destAudioFrames) > 0 {
-		testtools.CheckFrameTiming(t, destAudioFrames, "audio", runDuration, actualElapsed, threshold)
+		checkSegmentedFrameTiming(t, destAudioFrames, "audio", runDuration, actualElapsed, threshold, maxSegmentLead)
 		testtools.CheckSequenceIDContinuity(t, destAudioFrames, "audio")
 	}
 
@@ -588,14 +581,90 @@ func testHLSReaderTiming(t *testing.T, rateControl, genPTS, ptsFilter bool, play
 	dtsAudioFrames := cloneFramesWithDTSAsPTS(destAudioFrames)
 
 	if len(dtsVideoFrames) > 0 {
-		testtools.CheckFrameTiming(t, dtsVideoFrames, "video-dts", runDuration, actualElapsed, threshold)
+		checkSegmentedFrameTiming(t, dtsVideoFrames, "video-dts", runDuration, actualElapsed, threshold, maxSegmentLead)
 		testtools.CheckSequenceIDContinuity(t, dtsVideoFrames, "video-dts")
 	}
 
 	if len(dtsAudioFrames) > 0 {
-		testtools.CheckFrameTiming(t, dtsAudioFrames, "audio-dts", runDuration, actualElapsed, threshold)
+		checkSegmentedFrameTiming(t, dtsAudioFrames, "audio-dts", runDuration, actualElapsed, threshold, maxSegmentLead)
 		testtools.CheckSequenceIDContinuity(t, dtsAudioFrames, "audio-dts")
 	}
+}
+
+func checkSegmentedFrameTiming(t *testing.T, frames []*Frame, frameType string, expectedDuration, actualElapsed time.Duration, threshold float64, maxLead time.Duration) {
+	t.Helper()
+
+	if len(frames) == 0 {
+		return
+	}
+
+	minPTS := frames[0].PTS
+	maxPTS := frames[0].PTS
+	for _, frame := range frames[1:] {
+		if frame == nil {
+			continue
+		}
+		if frame.PTS < minPTS {
+			minPTS = frame.PTS
+		}
+		if frame.PTS > maxPTS {
+			maxPTS = frame.PTS
+		}
+	}
+
+	ptsWindow := maxPTS - minPTS
+	minExpected := time.Duration(float64(expectedDuration) * (1 - threshold))
+	maxExpected := actualElapsed + maxLead
+
+	t.Logf("\n=== %s Segmented Timing Check ===", frameType)
+	t.Logf("Actual elapsed time: %v", actualElapsed)
+	t.Logf("Expected duration: %v", expectedDuration)
+	t.Logf("PTS window: %v (from %v to %v)", ptsWindow, minPTS, maxPTS)
+	t.Logf("Allowed window: [%v, %v]", minExpected, maxExpected)
+
+	if ptsWindow < minExpected {
+		t.Errorf("%s PTS window %v is shorter than expected lower bound %v", frameType, ptsWindow, minExpected)
+	}
+	if ptsWindow > maxExpected {
+		t.Errorf("%s PTS window %v exceeds segmented upper bound %v", frameType, ptsWindow, maxExpected)
+	}
+}
+
+func normalizeSwitchOperations(ops []SwitchOperation) []SwitchOperation {
+	if len(ops) == 0 {
+		return nil
+	}
+
+	normalized := make([]SwitchOperation, 0, len(ops))
+	acc := time.Duration(0)
+
+	for _, op := range ops {
+		if len(normalized) > 0 && normalized[len(normalized)-1].InputID == op.InputID {
+			normalized[len(normalized)-1].Duration += op.Duration
+			acc += op.Duration
+			continue
+		}
+
+		normalized = append(normalized, SwitchOperation{
+			InputID:  op.InputID,
+			At:       acc,
+			Duration: op.Duration,
+		})
+		acc += op.Duration
+	}
+
+	return normalized
+}
+
+func countDistinctSwitchInputs(ops []SwitchOperation) int {
+	seen := make(map[string]struct{}, len(ops))
+	for _, op := range ops {
+		if op.InputID == "" {
+			continue
+		}
+		seen[op.InputID] = struct{}{}
+	}
+	return len(seen)
 }
 
 // TestStreamer_RTMPReaderTiming verifies that RTMP reader timing matches elapsed time

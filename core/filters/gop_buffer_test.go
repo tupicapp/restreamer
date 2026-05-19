@@ -1,7 +1,7 @@
 package filters
 
 import (
-	"restreamer/core/shared"
+	"github.com/tupicapp/restreamer/core/shared"
 	"testing"
 	"time"
 )

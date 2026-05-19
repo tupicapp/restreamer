@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"restreamer/core/decoder"
-	"restreamer/core/encoder"
-	"restreamer/core/raw"
-	shared "restreamer/core/shared"
+	"github.com/tupicapp/restreamer/core/decoder"
+	"github.com/tupicapp/restreamer/core/encoder"
+	"github.com/tupicapp/restreamer/core/raw"
+	shared "github.com/tupicapp/restreamer/core/shared"
 )
 
 const (

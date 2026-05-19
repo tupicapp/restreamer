@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	core "restreamer/core"
-	streaminputs "restreamer/core/inputs"
-	"restreamer/core/outputs"
-	"restreamer/core/storage"
+	core "github.com/tupicapp/restreamer/core"
+	streaminputs "github.com/tupicapp/restreamer/core/inputs"
+	"github.com/tupicapp/restreamer/core/outputs"
+	"github.com/tupicapp/restreamer/core/storage"
 )
 
 // TestHLSStreamerPassthrough tests HLS input → Streamer → HLS output passthrough,

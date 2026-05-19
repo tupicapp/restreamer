@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	shared "restreamer/core/shared"
-	"restreamer/core/streamfactory"
+	shared "github.com/tupicapp/restreamer/core/shared"
+	"github.com/tupicapp/restreamer/core/streamfactory"
 )
 
 type SceneMode string

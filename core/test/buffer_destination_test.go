@@ -3,8 +3,8 @@ package test
 import (
 	"context"
 	"fmt"
-	core "restreamer/core"
-	"restreamer/core/shared"
+	core "github.com/tupicapp/restreamer/core"
+	"github.com/tupicapp/restreamer/core/shared"
 	"sync"
 	"time"
 )

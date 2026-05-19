@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	shared "restreamer/core/shared"
-	pkgrtmp "restreamer/pkg/rtmp"
+	shared "github.com/tupicapp/restreamer/core/shared"
+	pkgrtmp "github.com/tupicapp/restreamer/pkg/rtmp"
 
 	"github.com/bluenviron/gortmplib"
 	"github.com/bluenviron/gortmplib/pkg/codecs"

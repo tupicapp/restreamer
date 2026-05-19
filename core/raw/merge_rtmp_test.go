@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"restreamer/core/decoder"
-	"restreamer/core/inputs"
-	"restreamer/core/raw"
-	shared "restreamer/core/shared"
+	"github.com/tupicapp/restreamer/core/decoder"
+	"github.com/tupicapp/restreamer/core/inputs"
+	"github.com/tupicapp/restreamer/core/raw"
+	shared "github.com/tupicapp/restreamer/core/shared"
 )
 
 func TestMergeTwoRTMPReadersToRawVideo(t *testing.T) {

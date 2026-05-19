@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	filters "restreamer/core/filters"
-	shared "restreamer/core/shared"
+	filters "github.com/tupicapp/restreamer/core/filters"
+	shared "github.com/tupicapp/restreamer/core/shared"
 
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/mpeg4audio"
 	mediats "github.com/bluenviron/mediacommon/v2/pkg/formats/mpegts"
@@ -130,9 +130,9 @@ func New(id string, outputRoot any, opts ...Option) (*Recorder, error) {
 	}
 
 	r := &Recorder{
-		id:              id,
-		url:             id,
-		outputRoot:      rootFolder,
+		id:         id,
+		url:        id,
+		outputRoot: rootFolder,
 		// Recorder output must not drop stale frames, otherwise reference-frame
 		// loss can corrupt later packets inside the generated segments.
 		gopBuffer:       filters.NewGOPBufferWithOptions(true, true, true, true, false),

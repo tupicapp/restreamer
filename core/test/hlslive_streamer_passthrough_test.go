@@ -2,14 +2,11 @@ package test
 
 import (
 	"context"
-	"net/http"
-	"net/http/httptest"
-	"os"
+	core "github.com/tupicapp/restreamer/core"
+	streaminputs "github.com/tupicapp/restreamer/core/inputs"
+	"github.com/tupicapp/restreamer/core/outputs"
+	"github.com/tupicapp/restreamer/core/storage"
 	"path/filepath"
-	core "restreamer/core"
-	streaminputs "restreamer/core/inputs"
-	"restreamer/core/outputs"
-	"restreamer/core/storage"
 	"testing"
 	"time"
 )
@@ -18,29 +15,10 @@ import (
 // feeds it through the Streamer via NewHLSLive, and verifies the output matches
 // the same frozen reference fixture.
 func TestHLSLiveStreamerPassthrough(t *testing.T) {
-	liveSourceURL := getMixedTestLiveURL()
-	requireOrSkipHTTPReachable(t, liveSourceURL, 20*time.Second)
+	inputURL, referencePlaylist, cleanup := setupDeterministicLiveFixtureServer(t, 15*time.Second)
+	defer cleanup()
 
-	workDir := "./tests_streamer_live"
-	snapshotDir := filepath.Join(workDir, "snapshot")
-	normalizedDir := filepath.Join(workDir, "normalized")
-	outDir := filepath.Join(workDir, "output")
-	_ = os.RemoveAll(workDir)
-	for _, dir := range []string{snapshotDir, normalizedDir, outDir} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatalf("mkdir %s: %v", dir, err)
-		}
-	}
-	defer os.RemoveAll(workDir)
-
-	snapshotPath := snapshotLiveHLSFixture(t, liveSourceURL, 8*time.Second, snapshotDir)
-	makeHLSFixture(t, snapshotPath, 0, 15*time.Second, normalizedDir)
-	referencePlaylist := filepath.Join(normalizedDir, "stream.m3u8")
-
-	fileServer := httptest.NewServer(http.FileServer(http.Dir(workDir)))
-	defer fileServer.Close()
-
-	inputURL := fileServer.URL + "/normalized/stream.m3u8"
+	outDir := filepath.Join(t.TempDir(), "output")
 	testHLSLiveStreamerPassthroughWithSnapshot(t, inputURL, referencePlaylist, outDir)
 }
 

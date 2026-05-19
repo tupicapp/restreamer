@@ -5,7 +5,7 @@ package encoder
 import (
 	"fmt"
 
-	"restreamer/core/raw"
+	"github.com/tupicapp/restreamer/core/raw"
 )
 
 func NewAACEncoder(_ string, _ <-chan *raw.AudioFrame, opts ...AACEncoderOption) (AudioEncoder, error) {

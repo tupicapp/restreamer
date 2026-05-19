@@ -81,8 +81,8 @@ streaming-infra-up:
 	if [ $$published -eq 0 ]; then \
 		echo "  No RTMP fixture files found in $(RTMP_PUBLISH_DIR); publishing synthetic stream: $(RTMP_STREAM)"; \
 		nohup ffmpeg -hide_banner -loglevel error \
-			-re -f lavfi -i testsrc=size=1280x720:rate=30 \
-			-re -f lavfi -i sine=frequency=1000:sample_rate=48000 \
+			-re -f lavfi -i testsrc=size=1280x720:rate=30:duration=3600 \
+			-re -f lavfi -i sine=frequency=1000:sample_rate=48000:duration=3600 \
 			-c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p -g 30 -x264opts keyint=30:min-keyint=30:scenecut=0 \
 			-c:a aac -ar 48000 -b:a 128k -f flv "$(RTMP_URL)" </dev/null >>/tmp/rtmp_publish_$(RTMP_STREAM).log 2>&1 & \
 		published=1; \

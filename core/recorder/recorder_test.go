@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"restreamer/core/config"
-	"restreamer/core/storage"
-	shared "restreamer/core/shared"
+	"github.com/tupicapp/restreamer/core/config"
+	shared "github.com/tupicapp/restreamer/core/shared"
+	"github.com/tupicapp/restreamer/core/storage"
 )
 
 func TestRecorder_WiresGOPBufferAndSessionNaming(t *testing.T) {

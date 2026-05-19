@@ -11,10 +11,10 @@ import (
 	"syscall"
 	"time"
 
-	irajstreamer "restreamer/core"
-	"restreamer/core/raw"
-	scenes "restreamer/core/scenes"
-	"restreamer/core/streamfactory"
+	irajstreamer "github.com/tupicapp/restreamer/core"
+	"github.com/tupicapp/restreamer/core/raw"
+	scenes "github.com/tupicapp/restreamer/core/scenes"
+	"github.com/tupicapp/restreamer/core/streamfactory"
 
 	"github.com/spf13/cobra"
 )
@@ -22,19 +22,19 @@ import (
 // ─── single-scene command ─────────────────────────────────────────────────────
 
 type sceneCommandOptions struct {
-	sceneID             string
-	inputs              []string
-	layouts             []string
-	audioRatios         []int
-	canvas              string
-	output              string
-	audioFrom           int
-	outputFPS           int
-	startupTimeout      time.Duration
-	hlsLive             bool
-	hlsSegmentDuration  time.Duration
-	hlsPlaylistSize     int
-	hlsCleanInterval    time.Duration
+	sceneID            string
+	inputs             []string
+	layouts            []string
+	audioRatios        []int
+	canvas             string
+	output             string
+	audioFrom          int
+	outputFPS          int
+	startupTimeout     time.Duration
+	hlsLive            bool
+	hlsSegmentDuration time.Duration
+	hlsPlaylistSize    int
+	hlsCleanInterval   time.Duration
 
 	// multi-scene mode: each entry is "Name|inputURL|layout[|inputURL|layout...]"
 	sceneDefs []string
@@ -48,20 +48,20 @@ const (
 )
 
 type sceneSpec struct {
-	mode                sceneMode
-	sceneID             string
-	inputURLs           []string
-	layouts             []raw.VideoLayout
-	canvas              raw.CanvasSpec
-	outputURL           string
-	hlsOptions          *streamfactory.HLSOutputOptions
-	audioFrom           int
-	audioRatios         []int
-	outputFPS           int
-	startupTimeout      time.Duration
-	hlsSegmentDuration  time.Duration
-	hlsPlaylistSize     int
-	hlsCleanInterval    time.Duration
+	mode               sceneMode
+	sceneID            string
+	inputURLs          []string
+	layouts            []raw.VideoLayout
+	canvas             raw.CanvasSpec
+	outputURL          string
+	hlsOptions         *streamfactory.HLSOutputOptions
+	audioFrom          int
+	audioRatios        []int
+	outputFPS          int
+	startupTimeout     time.Duration
+	hlsSegmentDuration time.Duration
+	hlsPlaylistSize    int
+	hlsCleanInterval   time.Duration
 }
 
 type sceneEntry struct {

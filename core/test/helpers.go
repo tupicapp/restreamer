@@ -3,8 +3,8 @@ package test
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"restreamer/core/inputs"
-	"restreamer/core/shared"
+	"github.com/tupicapp/restreamer/core/inputs"
+	"github.com/tupicapp/restreamer/core/shared"
 )
 
 type Frame = shared.Frame

@@ -5,7 +5,7 @@ package encoder
 import (
 	"fmt"
 
-	"restreamer/core/raw"
+	"github.com/tupicapp/restreamer/core/raw"
 )
 
 func NewH264Encoder(_ string, _ <-chan *raw.VideoFrame, _ ...H264EncoderOption) (VideoEncoder, error) {

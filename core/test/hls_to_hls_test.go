@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	corehelpers "restreamer/core"
-	streaminputs "restreamer/core/inputs"
-	"restreamer/core/outputs"
-	"restreamer/core/storage"
-	testtools "restreamer/core/test_tools"
+	corehelpers "github.com/tupicapp/restreamer/core"
+	streaminputs "github.com/tupicapp/restreamer/core/inputs"
+	"github.com/tupicapp/restreamer/core/outputs"
+	"github.com/tupicapp/restreamer/core/storage"
+	testtools "github.com/tupicapp/restreamer/core/test_tools"
 )
 
 func mustListen(t *testing.T, addr string) net.Listener {

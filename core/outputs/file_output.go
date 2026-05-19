@@ -3,9 +3,9 @@ package outputs
 import (
 	"context"
 	"fmt"
+	"github.com/tupicapp/restreamer/core/shared"
 	"os"
 	"path/filepath"
-	"restreamer/core/shared"
 	"sync"
 	"time"
 

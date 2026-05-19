@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	shared "restreamer/core/shared"
+	shared "github.com/tupicapp/restreamer/core/shared"
 
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/h264"
 	"github.com/nareix/joy4/av"

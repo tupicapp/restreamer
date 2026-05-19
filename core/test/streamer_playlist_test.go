@@ -1,7 +1,7 @@
 package test
 
 import (
-	core "restreamer/core"
+	core "github.com/tupicapp/restreamer/core"
 	"strings"
 	"testing"
 )

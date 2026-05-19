@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	core "restreamer/core"
-	"restreamer/core/inputs"
-	"restreamer/core/outputs"
-	"restreamer/core/storage"
+	core "github.com/tupicapp/restreamer/core"
+	"github.com/tupicapp/restreamer/core/inputs"
+	"github.com/tupicapp/restreamer/core/outputs"
+	"github.com/tupicapp/restreamer/core/storage"
 )
 
 type streamKind string

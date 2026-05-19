@@ -2,7 +2,7 @@ package outputs
 
 import (
 	"bytes"
-	"restreamer/core/shared"
+	"github.com/tupicapp/restreamer/core/shared"
 	"testing"
 	"time"
 )

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	corehelpers "restreamer/core"
+	corehelpers "github.com/tupicapp/restreamer/core"
 )
 
 type mockStream struct {

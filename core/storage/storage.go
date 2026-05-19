@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"restreamer/core/config"
+	"github.com/tupicapp/restreamer/core/config"
 )
 
 type Local struct {

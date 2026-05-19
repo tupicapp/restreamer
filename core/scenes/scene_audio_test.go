@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"restreamer/core/raw"
-	shared "restreamer/core/shared"
+	"github.com/tupicapp/restreamer/core/raw"
+	shared "github.com/tupicapp/restreamer/core/shared"
 )
 
 func TestScene_EnqueueLatestAudioKeepsNewestFramesWhenOutputBacksUp(t *testing.T) {

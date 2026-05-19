@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	filters "github.com/tupicapp/restreamer/core/filters"
+	"github.com/tupicapp/restreamer/core/shared"
 	"net/url"
-	filters "restreamer/core/filters"
-	"restreamer/core/shared"
 	"sync"
 	"time"
 

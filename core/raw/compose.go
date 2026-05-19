@@ -6,7 +6,7 @@ import (
 	"sort"
 	"time"
 
-	shared "restreamer/core/shared"
+	shared "github.com/tupicapp/restreamer/core/shared"
 )
 
 func ComposeYUV420P(spec CanvasSpec, placements []VideoPlacement) (*VideoFrame, error) {

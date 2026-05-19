@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	core "restreamer/core"
-	"restreamer/core/streamfactory"
+	core "github.com/tupicapp/restreamer/core"
+	"github.com/tupicapp/restreamer/core/streamfactory"
 )
 
 type SwitcherRunner func(ctx context.Context, entries []SceneEntry, streamer *core.Streamer) error

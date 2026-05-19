@@ -1,6 +1,6 @@
 package irajstreamer
 
-import shared "restreamer/core/shared"
+import shared "github.com/tupicapp/restreamer/core/shared"
 
 type StreamType = shared.StreamType
 type Stream = shared.Stream

@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	shared "restreamer/core/shared"
+	shared "github.com/tupicapp/restreamer/core/shared"
 )
 
 func TestComposeYUV420PBackground(t *testing.T) {

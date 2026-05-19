@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	shared "restreamer/core/shared"
+	shared "github.com/tupicapp/restreamer/core/shared"
 )
 
 type Queue interface {

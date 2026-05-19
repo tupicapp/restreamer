@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"time"
 
-	"restreamer/core/decoder"
-	"restreamer/core/encoder"
-	"restreamer/core/raw"
-	shared "restreamer/core/shared"
+	"github.com/tupicapp/restreamer/core/decoder"
+	"github.com/tupicapp/restreamer/core/encoder"
+	"github.com/tupicapp/restreamer/core/raw"
+	shared "github.com/tupicapp/restreamer/core/shared"
 )
 
 func NewScene(id string, canvas raw.CanvasSpec, inputs []Input, opts ...Option) (*Scene, error) {

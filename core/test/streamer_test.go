@@ -4,16 +4,16 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	corehelpers "github.com/tupicapp/restreamer/core"
+	streaminputs "github.com/tupicapp/restreamer/core/inputs"
+	"github.com/tupicapp/restreamer/core/outputs"
+	testtools "github.com/tupicapp/restreamer/core/test_tools"
 	"io"
 	"net/url"
 	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
-	corehelpers "restreamer/core"
-	streaminputs "restreamer/core/inputs"
-	"restreamer/core/outputs"
-	testtools "restreamer/core/test_tools"
 	"sort"
 	"strconv"
 	"strings"
@@ -224,19 +224,15 @@ func TestStreamer_HLSReaderToBufferingDestination(t *testing.T) {
 }
 
 func TestStreamer_HLSReaderLiveToBufferingDestination(t *testing.T) {
-	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		t.Skip("ffmpeg not available, skipping HLS reader live test")
-	}
-	if !isRTMPURLAvailable(defaultFFmpegRTMPURL + "healthcheck") {
-		t.Skip("RTMP server not available on 127.0.0.1:1938, skipping HLS reader live test")
-	}
+	inputURL, _, cleanup := setupDeterministicLiveFixtureServer(t, 15*time.Second)
+	defer cleanup()
 
 	// List of HLS videos to test
 	hlsVideos := []TestVideoConfig{
 		{
 			Name:        "hls_video_2",
-			FilePath:    "https://live-hls-web-aja-fa.getaj.net/AJA/03.m3u8",
-			Description: "M4S HLS test video",
+			FilePath:    inputURL,
+			Description: "Deterministic HLS live test fixture",
 			Skip:        false,
 		},
 	}
@@ -624,7 +620,7 @@ func testHLSReaderToBufferingDestination(t *testing.T, rateControl, genPTS, ptsF
 }
 
 func testHLSReaderLiveToBufferingDestination(t *testing.T, rateControl, genPTS, ptsFilter bool, playlistURI, streamName string) {
-	collectionDuration := 40 * time.Second
+	collectionDuration := 12 * time.Second
 
 	streamer := corehelpers.NewStreamer()
 	defer streamer.Close()

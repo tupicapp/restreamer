@@ -1,4 +1,4 @@
-module restreamer
+module github.com/tupicapp/restreamer
 
 go 1.26.2
 

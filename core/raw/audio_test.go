@@ -3,7 +3,7 @@ package raw
 import (
 	"testing"
 
-	shared "restreamer/core/shared"
+	shared "github.com/tupicapp/restreamer/core/shared"
 )
 
 func TestAudioFrameValidate(t *testing.T) {

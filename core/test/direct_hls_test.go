@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	streaminputs "restreamer/core/inputs"
-	"restreamer/core/outputs"
-	"restreamer/core/storage"
+	streaminputs "github.com/tupicapp/restreamer/core/inputs"
+	"github.com/tupicapp/restreamer/core/outputs"
+	"github.com/tupicapp/restreamer/core/storage"
 )
 
 // TestDirectHLSPassthrough streams directly from HLS input to HLS output without Streamer,

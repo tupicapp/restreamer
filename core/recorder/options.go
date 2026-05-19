@@ -1,7 +1,7 @@
 package recorder
 
 import (
-	ilogger "restreamer/core/logger"
+	ilogger "github.com/tupicapp/restreamer/core/logger"
 	"strings"
 	"time"
 

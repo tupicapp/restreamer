@@ -30,8 +30,8 @@ import (
 	"time"
 	"unsafe"
 
-	"restreamer/core/raw"
-	shared "restreamer/core/shared"
+	"github.com/tupicapp/restreamer/core/raw"
+	shared "github.com/tupicapp/restreamer/core/shared"
 
 	"github.com/nareix/joy4/codec/h264parser"
 )

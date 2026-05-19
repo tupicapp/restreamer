@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/tupicapp/restreamer/core/shared"
 	"io"
 	"os"
 	"os/exec"
-	"restreamer/core/shared"
 	"sync"
 	"time"
 

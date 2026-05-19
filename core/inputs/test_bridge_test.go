@@ -1,8 +1,8 @@
 package inputs
 
 import (
+	"github.com/tupicapp/restreamer/core/test_tools"
 	"net/http/httptest"
-	"restreamer/core/test_tools"
 	"testing"
 	"time"
 )

@@ -13,10 +13,10 @@ import (
 	"sync"
 	"time"
 
-	"restreamer/core/logger"
-	"restreamer/core/outputs"
-	"restreamer/core/recorder"
-	shared "restreamer/core/shared"
+	"github.com/tupicapp/restreamer/core/logger"
+	"github.com/tupicapp/restreamer/core/outputs"
+	"github.com/tupicapp/restreamer/core/recorder"
+	shared "github.com/tupicapp/restreamer/core/shared"
 
 	"go.uber.org/zap"
 )

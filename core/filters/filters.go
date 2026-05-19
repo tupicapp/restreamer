@@ -1,8 +1,8 @@
 package filters
 
 import (
-	"restreamer/core/logger"
-	"restreamer/core/shared"
+	"github.com/tupicapp/restreamer/core/logger"
+	"github.com/tupicapp/restreamer/core/shared"
 	"sort"
 	"sync"
 	"time"

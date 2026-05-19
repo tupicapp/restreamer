@@ -1,7 +1,7 @@
 package irajstreamer
 
 import (
-	"restreamer/core/logger"
+	"github.com/tupicapp/restreamer/core/logger"
 	"sync"
 	"time"
 

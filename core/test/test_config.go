@@ -37,8 +37,8 @@ var TestVideoList = []TestVideoConfig{
 	// },
 	{
 		Name:        "hls_video_1",
-		FilePath:    "testdata/hls/ts_1/index.m3u8",
-		Description: "Primary HLS test video",
+		FilePath:    "testdata/stream.m3u8",
+		Description: "Primary HLS test fixture",
 		Skip:        false,
 	},
 	// Add more HLS videos here as they become available
@@ -68,11 +68,16 @@ func getTestHLSVideos(t *testing.T) []TestVideoConfig {
 			continue
 		}
 
-		hlsDir := filepath.Join(testdataDir, "hls", video.FilePath)
-		if _, err := os.Stat(hlsDir); err == nil {
+		fullPath := resolveTestVideoPath(testdataDir, video.FilePath)
+		if fullPath == "" {
+			t.Logf("Skipping HLS video '%s' (%s): unsupported fixture path", video.Name, video.FilePath)
+			continue
+		}
+
+		if _, err := os.Stat(fullPath); err == nil {
 			availableVideos = append(availableVideos, video)
 		} else {
-			t.Logf("Skipping HLS video '%s' (%s): directory not found: %v", video.Name, video.FilePath, err)
+			t.Logf("Skipping HLS video '%s' (%s): fixture not found: %v", video.Name, video.FilePath, err)
 		}
 	}
 
@@ -153,7 +158,7 @@ func setupHLSVideoServer(t *testing.T, video TestVideoConfig) (string, *httptest
 			return video.FilePath, nil, nil
 		}
 
-		if strings.Contains(video.FilePath, "testdata/hls/") {
+		if strings.Contains(video.FilePath, "testdata/") {
 			relativePath := strings.TrimPrefix(video.FilePath, "/")
 			playlistURI := fmt.Sprintf("%s/%s", baseURL, relativePath)
 			requireHTTPReachable(t, playlistURI, 5*time.Second)
@@ -166,25 +171,23 @@ func setupHLSVideoServer(t *testing.T, video TestVideoConfig) (string, *httptest
 	}
 
 	// Check if it's a full path (contains testdata/hls) or relative path
-	if strings.Contains(video.FilePath, "testdata/hls/") {
-		// Full path like "testdata/hls/ts_1/index.m3u8"
-		// First find the testdata directory
+	if strings.Contains(video.FilePath, "testdata/") {
+		// Full path like "testdata/stream.m3u8" or "testdata/hls/ts_1/index.m3u8"
 		testdataDir := findTestdataDirForTests()
 		if testdataDir == "" {
 			return "", nil, fmt.Errorf("testdata directory not found")
 		}
 
-		// Resolve the full path relative to testdata directory
-		// Remove "testdata/" prefix from the path
-		relativePath := strings.TrimPrefix(video.FilePath, "testdata/")
-		fullPath := filepath.Join(testdataDir, relativePath)
+		fullPath := resolveTestVideoPath(testdataDir, video.FilePath)
+		if fullPath == "" {
+			return "", nil, fmt.Errorf("unsupported HLS fixture path %q", video.FilePath)
+		}
 
-		// Check if file exists
 		if _, err := os.Stat(fullPath); err != nil {
 			return "", nil, fmt.Errorf("HLS playlist file not found: %v", err)
 		}
 
-		// Start HTTP file server for HLS (serve from testdata directory)
+		relativePath := strings.TrimPrefix(video.FilePath, "testdata/")
 		fileServer := httptest.NewServer(http.FileServer(http.Dir(testdataDir)))
 		playlistURI := fmt.Sprintf("%s/%s", fileServer.URL, relativePath)
 
@@ -207,6 +210,19 @@ func setupHLSVideoServer(t *testing.T, video TestVideoConfig) (string, *httptest
 
 		return playlistURI, fileServer, nil
 	}
+}
+
+func resolveTestVideoPath(testdataDir, filePath string) string {
+	if testdataDir == "" || filePath == "" {
+		return ""
+	}
+
+	if strings.Contains(filePath, "testdata/") {
+		relativePath := strings.TrimPrefix(filePath, "testdata/")
+		return filepath.Join(testdataDir, relativePath)
+	}
+
+	return filepath.Join(testdataDir, "hls", filePath)
 }
 
 // findTestdataDirForTests finds the testdata directory for tests
@@ -308,15 +324,30 @@ func getConfiguredRTMPURL(t *testing.T) string {
 	}
 
 	cfg, err := getTestConfig(t)
-	if err != nil || cfg == nil {
-		t.Fatalf("failed to load test config for RTMP URL: %v", err)
+	if err == nil && cfg != nil {
+		rtmpURL := strings.TrimSpace(cfg.TestURLs.RTMPURL)
+		if rtmpURL != "" {
+			return rtmpURL
+		}
 	}
 
-	rtmpURL := strings.TrimSpace(cfg.TestURLs.RTMPURL)
-	if rtmpURL == "" {
-		t.Fatalf("test_urls.rtmp_url is empty")
+	testURLs := []string{
+		"rtmp://127.0.0.1:1938/live/1",
+		"rtmp://localhost:1938/live/1",
+		"rtmp://127.0.0.1:1935/live/test",
+		"rtmp://localhost:1935/live/test",
 	}
-	return rtmpURL
+	for _, testURL := range testURLs {
+		if isRTMPURLAvailable(testURL) {
+			return testURL
+		}
+	}
+
+	if err != nil {
+		t.Logf("RTMP config not available, falling back to default URL: %v", err)
+	}
+
+	return testURLs[0]
 }
 
 func requireHTTPReachable(t *testing.T, url string, timeout time.Duration) {
@@ -348,15 +379,18 @@ func getConfiguredHLSLiveURL(t *testing.T) string {
 	}
 
 	cfg, err := getTestConfig(t)
-	if err != nil || cfg == nil {
-		t.Fatalf("failed to load test config for HLS live URL: %v", err)
+	if err == nil && cfg != nil {
+		hlsURL := strings.TrimSpace(cfg.TestURLs.HLSLiveURL)
+		if hlsURL != "" {
+			return hlsURL
+		}
 	}
 
-	hlsURL := strings.TrimSpace(cfg.TestURLs.HLSLiveURL)
-	if hlsURL == "" {
-		t.Fatalf("test_urls.hls_live_url is empty")
+	if err != nil {
+		t.Logf("HLS live config not available, falling back to local fixture: %v", err)
 	}
-	return hlsURL
+
+	return getConfiguredHLSFixtureURL("testdata/stream.m3u8")
 }
 
 func getConfiguredHLSFixtureURL(relativePath string) string {

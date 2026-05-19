@@ -7,7 +7,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"restreamer/core/logger"
+	"github.com/tupicapp/restreamer/core/logger"
 
 	"go.uber.org/zap"
 )

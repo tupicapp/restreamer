@@ -1,7 +1,7 @@
 package test
 
 import (
-	testtools "restreamer/core/test_tools"
+	testtools "github.com/tupicapp/restreamer/core/test_tools"
 )
 
 // Re-export types from testtools for use in test package

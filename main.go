@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"restreamer/cmd"
+	"github.com/tupicapp/restreamer/cmd"
 )
 
 func main() {

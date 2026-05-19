@@ -8,7 +8,7 @@ import (
 
 	gohlslib "github.com/bluenviron/gohlslib/v2"
 	ghlcodecs "github.com/bluenviron/gohlslib/v2/pkg/codecs"
-	shared "restreamer/core/shared"
+	shared "github.com/tupicapp/restreamer/core/shared"
 
 	"go.uber.org/zap"
 )
@@ -20,10 +20,10 @@ type hlsInputLive struct {
 	videoChan chan *Frame
 	audioChan chan *Frame
 
-	done      chan struct{}
-	started   chan struct{}
-	closeOnce sync.Once
-	startOnce sync.Once
+	done       chan struct{}
+	started    chan struct{}
+	closeOnce  sync.Once
+	startOnce  sync.Once
 	signalOnce sync.Once
 
 	mu             sync.Mutex

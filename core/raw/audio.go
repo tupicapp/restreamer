@@ -3,7 +3,7 @@ package raw
 import (
 	"fmt"
 
-	shared "restreamer/core/shared"
+	shared "github.com/tupicapp/restreamer/core/shared"
 )
 
 const (
