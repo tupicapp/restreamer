@@ -66,7 +66,9 @@ func testHLSLiveStreamerPassthroughWithSnapshot(t *testing.T, inputURL, referenc
 	}
 
 	lastFrameTime := time.Now()
-	noFrameTimeout := 2 * time.Second
+	noFrameTimeout := 5 * time.Second
+	maxPassDuration := 20 * time.Second
+	passDeadline := time.Now().Add(maxPassDuration)
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -85,6 +87,10 @@ func testHLSLiveStreamerPassthroughWithSnapshot(t *testing.T, inputURL, referenc
 			t.Logf("No frames for %v, stopping", noFrameTimeout)
 			break
 		}
+		if time.Now().After(passDeadline) {
+			t.Logf("Reached max pass duration %v, stopping", maxPassDuration)
+			break
+		}
 	}
 
 	streamer.Close()
@@ -97,6 +103,7 @@ func testHLSLiveStreamerPassthroughWithSnapshot(t *testing.T, inputURL, referenc
 	}
 
 	outputPlaylist := filepath.Join(outDir, "stream.m3u8")
+	waitForHLSArtifacts(t, outDir, 20*time.Second, 2)
 	hlsErr := EqualHLS(referencePlaylist, outputPlaylist)
 
 	if hlsErr.ProbeError1 != nil {

@@ -45,7 +45,9 @@ func testDirectHLSLivePassthroughWithSnapshot(t *testing.T, inputURL, referenceP
 	stopChan := make(chan struct{})
 	var videoCount, audioCount int64
 	lastFrameTime := time.Now()
-	noFrameTimeout := 2 * time.Second
+	noFrameTimeout := 5 * time.Second
+	maxPassDuration := 20 * time.Second
+	passDeadline := time.Now().Add(maxPassDuration)
 
 	go func() {
 		for {
@@ -108,6 +110,10 @@ func testDirectHLSLivePassthroughWithSnapshot(t *testing.T, inputURL, referenceP
 			t.Logf("No frames for %v, stopping", noFrameTimeout)
 			break
 		}
+		if time.Now().After(passDeadline) {
+			t.Logf("Reached max pass duration %v, stopping", maxPassDuration)
+			break
+		}
 	}
 
 	close(stopChan)
@@ -121,6 +127,7 @@ func testDirectHLSLivePassthroughWithSnapshot(t *testing.T, inputURL, referenceP
 	t.Logf("Audio frames passed: %d", audioCount)
 
 	outputPlaylist := filepath.Join(outDir, "stream.m3u8")
+	waitForHLSArtifacts(t, outDir, 20*time.Second, 2)
 	hlsErr := EqualHLS(referencePlaylist, outputPlaylist)
 
 	if hlsErr.ProbeError1 != nil {

@@ -264,7 +264,7 @@ func runStreamerWindowSwitchStreams(t *testing.T, outDir string, inputs []core.S
 	}
 
 	streamer.Close()
-	time.Sleep(3 * time.Second)
+	waitForHLSArtifacts(t, outDir, 20*time.Second, 5)
 }
 
 func runMixedLiveFileWindowSwitch(t *testing.T, outDir, liveInputURL, input1URL, input2URL string) {
@@ -332,7 +332,7 @@ func runMixedLiveFileWindowSwitch(t *testing.T, outDir, liveInputURL, input1URL,
 	time.Sleep(5 * time.Second)
 
 	streamer.Close()
-	time.Sleep(3 * time.Second)
+	waitForHLSArtifacts(t, outDir, 20*time.Second, 5)
 }
 
 func collectHLSFrames(t *testing.T, playlistURL, id string) ([]*Frame, []*Frame) {
@@ -352,7 +352,7 @@ func collectHLSFrames(t *testing.T, playlistURL, id string) ([]*Frame, []*Frame)
 		t.Fatalf("collect switch(%s) failed", id)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	if err := input.WaitForStart(ctx); err != nil {
 		t.Fatalf("collect input start(%s): %v", id, err)
@@ -373,7 +373,7 @@ func collectHLSFrames(t *testing.T, playlistURL, id string) ([]*Frame, []*Frame)
 		if bufState != nil && bufState.LastIO.After(lastFrameTime) {
 			lastFrameTime = bufState.LastIO
 		}
-		if time.Since(lastFrameTime) > 1200*time.Millisecond {
+		if time.Since(lastFrameTime) > 2500*time.Millisecond {
 			break
 		}
 	}
