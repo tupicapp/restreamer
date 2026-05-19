@@ -359,6 +359,15 @@ func getConfiguredHLSLiveURL(t *testing.T) string {
 	return hlsURL
 }
 
+func getConfiguredHLSFixtureURL(relativePath string) string {
+	baseURL := strings.TrimSpace(os.Getenv("HLS_SERVER_URL"))
+	if baseURL == "" {
+		baseURL = "http://127.0.0.1:8091"
+	}
+
+	return strings.TrimRight(baseURL, "/") + "/" + strings.TrimLeft(relativePath, "/")
+}
+
 func getRTMPBaseURL(t *testing.T, rtmpURL string) string {
 	t.Helper()
 

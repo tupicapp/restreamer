@@ -150,8 +150,8 @@ func TestStreamer_HLSReaderToBufferingDestination(t *testing.T) {
 	hlsVideos := []TestVideoConfig{
 		{
 			Name:        "hls_video_1",
-			FilePath:    "http://127.0.0.1:8090/testdata/hls/ts_nob/index.m3u8",
-			Description: "Primary HLS test video",
+			FilePath:    getConfiguredHLSFixtureURL("testdata/stream.m3u8"),
+			Description: "Primary HLS test fixture",
 			Skip:        false,
 		},
 		// {

@@ -24,3 +24,5 @@ go run irajstreamer/main.go switch \
 - Stream protocol/type detection remains delegated to existing `streamfactory` behavior.
 - The live terminal switcher mechanism is intentionally copied into `switch.go` and not imported from the scene command helpers.
 - CI only validates the test suite. Version tags and GitHub releases are created manually when needed.
+- CI fixture bootstrap assumes an RTMP server is reachable on `127.0.0.1:1938`; when `testdata/rtmp` is absent, `make -f MakeFile streaming-infra-up` publishes a synthetic H.264/AAC stream to `rtmp://127.0.0.1:1938/live/1`.
+- Integration tests use `HLS_SERVER_URL` when provided and otherwise fall back to the checked-in `testdata/stream.m3u8` fixture served from `http://127.0.0.1:8091`.

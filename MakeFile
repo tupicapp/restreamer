@@ -64,16 +64,33 @@ streaming-infra-up:
 		sleep $(STREAMING_READY_DELAY); \
 	done
 	@echo "  RTMP server ($(RTMP_HOST):$(RTMP_PORT)): OK"
-	@for f in $(RTMP_PUBLISH_DIR)/*; do \
-		if [ -f $$f ]; then \
-			stream=$$(basename $$f); \
-			stream=$${stream%.*}; \
-			echo "  Publishing RTMP stream: $$stream"; \
-			nohup ffmpeg -hide_banner -loglevel error -stream_loop -1 -re -i $$f \
-				-c:v libx264 -preset ultrafast -tune zerolatency -g 30 -x264opts keyint=30:min-keyint=30:scenecut=0 \
-				-c:a aac -f flv "$(RTMP_BASE_URL)$$stream" </dev/null >>/tmp/rtmp_publish_$$stream.log 2>&1 & \
-		fi; \
-	done
+	@published=0; \
+	if [ -d "$(RTMP_PUBLISH_DIR)" ]; then \
+		for f in $(RTMP_PUBLISH_DIR)/*; do \
+			if [ -f $$f ]; then \
+				stream=$$(basename $$f); \
+				stream=$${stream%.*}; \
+				echo "  Publishing RTMP stream from fixture file: $$stream"; \
+				nohup ffmpeg -hide_banner -loglevel error -stream_loop -1 -re -i $$f \
+					-c:v libx264 -preset ultrafast -tune zerolatency -g 30 -x264opts keyint=30:min-keyint=30:scenecut=0 \
+					-c:a aac -f flv "$(RTMP_BASE_URL)$$stream" </dev/null >>/tmp/rtmp_publish_$$stream.log 2>&1 & \
+				published=1; \
+			fi; \
+		done; \
+	fi; \
+	if [ $$published -eq 0 ]; then \
+		echo "  No RTMP fixture files found in $(RTMP_PUBLISH_DIR); publishing synthetic stream: $(RTMP_STREAM)"; \
+		nohup ffmpeg -hide_banner -loglevel error \
+			-re -f lavfi -i testsrc=size=1280x720:rate=30 \
+			-re -f lavfi -i sine=frequency=1000:sample_rate=48000 \
+			-c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p -g 30 -x264opts keyint=30:min-keyint=30:scenecut=0 \
+			-c:a aac -ar 48000 -b:a 128k -f flv "$(RTMP_URL)" </dev/null >>/tmp/rtmp_publish_$(RTMP_STREAM).log 2>&1 & \
+		published=1; \
+	fi; \
+	if [ $$published -eq 0 ]; then \
+		echo "==> ERROR: failed to start any RTMP publishers"; \
+		exit 1; \
+	fi
 	@echo "  Waiting for RTMP stream(s) to be ready..."
 	@sleep 4
 	@export HLS_SERVER_URL=$(HLS_SERVER_URL)

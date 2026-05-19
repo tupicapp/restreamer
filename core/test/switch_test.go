@@ -17,13 +17,13 @@ func TestStreamer_SwitchBetweenInputs(t *testing.T) {
 	// Inputs required by this test
 	hlsM4S := TestVideoConfig{
 		Name:        "hls_m4s",
-		FilePath:    "http://127.0.0.1:8090/testdata/hls/m4s/stream_2/playlist.m3u8",
-		Description: "HLS M4S test video",
+		FilePath:    getConfiguredHLSFixtureURL("testdata/stream.m3u8"),
+		Description: "Primary HLS test fixture",
 	}
 	hlsTS := TestVideoConfig{
 		Name:        "hls_ts",
-		FilePath:    "http://127.0.0.1:8090/testdata/hls/ts_nob/index.m3u8",
-		Description: "HLS TS no b frame test video",
+		FilePath:    getConfiguredHLSFixtureURL("testdata/stream.m3u8"),
+		Description: "Primary HLS test fixture",
 	}
 	// hlsLiveURL := getConfiguredHLSLiveURL(t)
 	// requireHTTPReachable(t, hlsLiveURL, 10*time.Second)
