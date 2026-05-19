@@ -1,10 +1,14 @@
-package irajstreamer
+package test_tools
 
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"os/exec"
 	"restreamer/core/logger"
+	"restreamer/core/shared"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +17,9 @@ import (
 )
 
 const maxGap = 1 * time.Second
+
+// Type alias for frame used in tests
+type Frame = shared.Frame
 
 // ============================================================================
 // Types for Stream Health Checks
@@ -205,7 +212,7 @@ type InputIDChange struct {
 // ============================================================================
 
 // frameHash computes SHA256 hash of all payload chunks concatenated
-func frameHash(frame *Frame) string {
+func FrameHash(frame *Frame) string {
 	hasher := sha256.New()
 	for _, chunk := range frame.Payload {
 		hasher.Write(chunk)
@@ -238,7 +245,7 @@ func contains(slice []int64, value int64) bool {
 // checkStreamHealth checks if a stream is healthy:
 // - PTS should increase monotonically
 // - Frames shouldn't have distance more than 100ms
-func checkStreamHealth(frames []*Frame, frameType string) StreamHealthResult {
+func CheckStreamHealth(frames []*shared.Frame, frameType string) StreamHealthResult {
 	result := StreamHealthResult{
 		TotalFrames: len(frames),
 		IsHealthy:   true,
@@ -356,7 +363,7 @@ func checkStreamHealth(frames []*Frame, frameType string) StreamHealthResult {
 }
 
 // printStreamHealth prints the health check results in a readable format
-func printStreamHealth(t *testing.T, result StreamHealthResult, frameType string) {
+func PrintStreamHealth(t *testing.T, result StreamHealthResult, frameType string) {
 	t.Logf("\n=== %s Stream Health Check ===", frameType)
 	t.Logf("Total Frames: %d", result.TotalFrames)
 	t.Logf("Is Healthy: %v", result.IsHealthy)
@@ -445,7 +452,7 @@ func printStreamHealth(t *testing.T, result StreamHealthResult, frameType string
 // ============================================================================
 
 // checkFrameTiming verifies that the PTS window of frames matches the elapsed time
-func checkFrameTiming(t *testing.T, frames []*Frame, frameType string, expectedDuration, actualElapsed time.Duration, threshold float64) {
+func CheckFrameTiming(t *testing.T, frames []*Frame, frameType string, expectedDuration, actualElapsed time.Duration, threshold float64) {
 	if len(frames) == 0 {
 		return
 	}
@@ -528,7 +535,7 @@ func checkFrameTiming(t *testing.T, frames []*Frame, frameType string, expectedD
 
 // checkSequenceIDContinuity verifies that sequence IDs are consecutive (no missing IDs)
 // Results are grouped and printed by InputID
-func checkSequenceIDContinuity(t *testing.T, frames []*Frame, frameType string) {
+func CheckSequenceIDContinuity(t *testing.T, frames []*Frame, frameType string) {
 	if len(frames) == 0 {
 		return
 	}
@@ -553,7 +560,7 @@ func checkSequenceIDContinuity(t *testing.T, frames []*Frame, frameType string) 
 		}
 
 		t.Logf("\n--- InputID: %s ---", inputID)
-		hasIssues := checkSequenceIDContinuityForInput(t, inputFrames, frameType, inputID)
+		hasIssues := CheckSequenceIDContinuityForInput(t, inputFrames, frameType, inputID)
 		if hasIssues {
 			overallHasIssues = true
 		}
@@ -565,7 +572,7 @@ func checkSequenceIDContinuity(t *testing.T, frames []*Frame, frameType string) 
 }
 
 // checkSequenceIDContinuityForInput checks sequence ID continuity for a specific InputID
-func checkSequenceIDContinuityForInput(t *testing.T, frames []*Frame, frameType, inputID string) bool {
+func CheckSequenceIDContinuityForInput(t *testing.T, frames []*Frame, frameType, inputID string) bool {
 	if len(frames) == 0 {
 		return false
 	}
@@ -697,7 +704,7 @@ func checkSequenceIDContinuityForInput(t *testing.T, frames []*Frame, frameType,
 
 // checkH264FrameHealth validates H264 frames for AVCC compatibility
 // This checks for issues that could cause "unable to decode AVCC: invalid length" errors
-func checkH264FrameHealth(t *testing.T, frames []*Frame) {
+func CheckH264FrameHealth(t *testing.T, frames []*Frame) {
 	if len(frames) == 0 {
 		return
 	}
@@ -919,7 +926,7 @@ func checkH264FrameHealth(t *testing.T, frames []*Frame) {
 
 // compareFrameSequences compares two frame sequences by dividing them into windows
 // and calculating similarity based on PTS and payload
-func compareFrameSequences(stream1, stream2 []*Frame, frameType string) FrameSequenceComparisonResult {
+func CompareFrameSequences(stream1, stream2 []*Frame, frameType string) FrameSequenceComparisonResult {
 	result := FrameSequenceComparisonResult{
 		TotalFrames: len(stream1),
 	}
@@ -996,8 +1003,8 @@ func compareFrameSequences(stream1, stream2 []*Frame, frameType string) FrameSeq
 			}
 
 			// Compare payload hash
-			hash1 := frameHash(frame1)
-			hash2 := frameHash(frame2)
+			hash1 := FrameHash(frame1)
+			hash2 := FrameHash(frame2)
 			if hash1 == hash2 {
 				payloadMatches++
 				result.PayloadMatches++
@@ -1082,8 +1089,8 @@ func printFrameSequenceComparison(t *testing.T, result FrameSequenceComparisonRe
 
 // windowMatchBenchmarkWithTiming compares two streams by finding all matching windows
 // and checks that each window's PTS span matches the elapsed time (with threshold)
-func windowMatchBenchmarkWithTiming(stream1, stream2 []*Frame, frameType string, elapsedTime time.Duration, threshold float64) WindowMatchBenchmarkResult {
-	result := windowMatchBenchmark(stream1, stream2, frameType)
+func WindowMatchBenchmarkWithTiming(stream1, stream2 []*Frame, frameType string, elapsedTime time.Duration, threshold float64) WindowMatchBenchmarkResult {
+	result := WindowMatchBenchmark(stream1, stream2, frameType)
 
 	// Check PTS window vs elapsed time for each window
 	elapsedSeconds := elapsedTime.Seconds()
@@ -1126,7 +1133,7 @@ func windowMatchBenchmarkWithTiming(stream1, stream2 []*Frame, frameType string,
 // and compares from each matching point until a mismatch, then continues
 // searching for the next matching window until the end of both streams
 // stream2 is used as the reference (source of truth)
-func windowMatchBenchmark(stream1, stream2 []*Frame, frameType string) WindowMatchBenchmarkResult {
+func WindowMatchBenchmark(stream1, stream2 []*Frame, frameType string) WindowMatchBenchmarkResult {
 	result := WindowMatchBenchmarkResult{
 		Windows:          make([]WindowMatch, 0),
 		MismatchContexts: make([]MismatchContext, 0),
@@ -1286,14 +1293,14 @@ func collectMismatchContext(stream1, stream2 []*Frame, mismatchIndex1, mismatchI
 	return ctx
 }
 
-// printWindowMatchBenchmark prints the window-match benchmark results
-func printWindowMatchBenchmark(t *testing.T, result WindowMatchBenchmarkResult, frameType string) {
+// PrintWindowMatchBenchmark prints the window-match benchmark results
+func PrintWindowMatchBenchmark(t *testing.T, result WindowMatchBenchmarkResult, frameType string) {
 	tsLabel := "PTS"
 	if strings.Contains(frameType, "dts") {
 		tsLabel = "DTS"
 	}
 
-	t.Logf("\n=== %s Window-Match Benchmark ===", frameType)
+	t.Logf("\n=== %s Wind	ow-Match Benchmark ===", frameType)
 	t.Logf("Total Windows Found: %d", result.TotalWindows)
 	t.Logf("Total Matched Frames: %d", result.TotalMatchedFrames)
 	t.Logf("Total Mismatched Frames: %d", result.TotalMismatchedFrames)
@@ -1342,7 +1349,7 @@ func printWindowMatchBenchmark(t *testing.T, result WindowMatchBenchmarkResult, 
 					f := ctx.BeforeFrames[j]
 					t.Logf("    [%d] %s=%v SeqID=%v Key=%v Codec=%v Hash=%s",
 						ctx.MismatchIndex2-len(ctx.BeforeFrames)+j,
-						tsLabel, f.PTS, f.SequenceID, f.IsKeyFrame, f.Codec, frameHash(f)[:16])
+						tsLabel, f.PTS, f.SequenceID, f.IsKeyFrame, f.Codec, FrameHash(f)[:16])
 				}
 			}
 
@@ -1353,14 +1360,14 @@ func printWindowMatchBenchmark(t *testing.T, result WindowMatchBenchmarkResult, 
 					ctx.MismatchIndex1,
 					tsLabel, ctx.MismatchFrame1.PTS, ctx.MismatchFrame1.SequenceID,
 					ctx.MismatchFrame1.IsKeyFrame, ctx.MismatchFrame1.Codec,
-					frameHash(ctx.MismatchFrame1)[:16])
+					FrameHash(ctx.MismatchFrame1)[:16])
 			}
 			if ctx.MismatchFrame2 != nil {
 				t.Logf("    Stream2[%d] (Reference): %s=%v SeqID=%v Key=%v Codec=%v Hash=%s",
 					ctx.MismatchIndex2,
 					tsLabel, ctx.MismatchFrame2.PTS, ctx.MismatchFrame2.SequenceID,
 					ctx.MismatchFrame2.IsKeyFrame, ctx.MismatchFrame2.Codec,
-					frameHash(ctx.MismatchFrame2)[:16])
+					FrameHash(ctx.MismatchFrame2)[:16])
 			}
 
 			// Print frames after (from reference stream)
@@ -1369,7 +1376,7 @@ func printWindowMatchBenchmark(t *testing.T, result WindowMatchBenchmarkResult, 
 				for j, f := range ctx.AfterFrames {
 					t.Logf("    [%d] %s=%v SeqID=%v Key=%v Codec=%v Hash=%s",
 						ctx.MismatchIndex2+j+1,
-						tsLabel, f.PTS, f.SequenceID, f.IsKeyFrame, f.Codec, frameHash(f)[:16])
+						tsLabel, f.PTS, f.SequenceID, f.IsKeyFrame, f.Codec, FrameHash(f)[:16])
 				}
 			}
 		}
@@ -1386,7 +1393,7 @@ func printWindowMatchBenchmark(t *testing.T, result WindowMatchBenchmarkResult, 
 // equalPacketRateBenchmark compares two streams by checking how many packets
 // from stream1 exist in stream2 (reference) with the same payload
 // stream2 is used as the reference (source of truth)
-func equalPacketRateBenchmark(stream1, stream2 []*Frame, frameType string) EqualPacketRateBenchmarkResult {
+func EqualPacketRateBenchmark(stream1, stream2 []*Frame, frameType string) EqualPacketRateBenchmarkResult {
 	result := EqualPacketRateBenchmarkResult{}
 
 	if len(stream1) == 0 || len(stream2) == 0 {
@@ -1445,7 +1452,7 @@ func equalPacketRateBenchmark(stream1, stream2 []*Frame, frameType string) Equal
 					Index:     idx,
 					Frame:     checkFrame,
 					RefFrame:  refFrame,
-					FrameHash: frameHash(checkFrame),
+					FrameHash: FrameHash(checkFrame),
 					Before:    collectFrameWindow(checkStream, idx, 3, true),
 					After:     collectFrameWindow(checkStream, idx, 3, false),
 					RefBefore: collectNearestByPTS(referenceStream, checkFrame.PTS, 3, true),
@@ -1459,7 +1466,7 @@ func equalPacketRateBenchmark(stream1, stream2 []*Frame, frameType string) Equal
 			ctx := MissingPacketContext{
 				Index:     idx,
 				Frame:     checkFrame,
-				FrameHash: frameHash(checkFrame),
+				FrameHash: FrameHash(checkFrame),
 				Before:    collectFrameWindow(checkStream, idx, 3, true),
 				After:     collectFrameWindow(checkStream, idx, 3, false),
 				RefBefore: collectNearestByPTS(referenceStream, checkFrame.PTS, 3, true),
@@ -1559,7 +1566,7 @@ func formatPTSForLog(f *Frame, baseTS time.Time) string {
 }
 
 // printEqualPacketRateBenchmark prints the equal-packet-rate benchmark results
-func printEqualPacketRateBenchmark(t *testing.T, result EqualPacketRateBenchmarkResult, frameType string) {
+func PrintEqualPacketRateBenchmark(t *testing.T, result EqualPacketRateBenchmarkResult, frameType string) {
 	t.Logf("\n=== %s Equal-Packet-Rate Benchmark (Stream2 as Reference) ===", frameType)
 	t.Logf("Smaller Stream Size: %d frames", result.SmallerStreamSize)
 	t.Logf("Larger Stream Size: %d frames", result.LargerStreamSize)
@@ -1581,20 +1588,20 @@ func printEqualPacketRateBenchmark(t *testing.T, result EqualPacketRateBenchmark
 
 			if ctx.RefFrame != nil {
 				t.Logf("    Reference Frame: PTS=%s DTS=%s SeqID=%v Key=%v Codec=%v Hash=%s",
-					formatPTSForLog(ctx.RefFrame, result.BaseTimestamp), formatPTSForLog(ctx.RefFrame, result.BaseTimestamp), ctx.RefFrame.SequenceID, ctx.RefFrame.IsKeyFrame, ctx.RefFrame.Codec, frameHash(ctx.RefFrame)[:16])
+					formatPTSForLog(ctx.RefFrame, result.BaseTimestamp), formatPTSForLog(ctx.RefFrame, result.BaseTimestamp), ctx.RefFrame.SequenceID, ctx.RefFrame.IsKeyFrame, ctx.RefFrame.Codec, FrameHash(ctx.RefFrame)[:16])
 			}
 			if len(ctx.Before) > 0 {
 				t.Logf("    Before:")
 				for bi, f := range ctx.Before {
 					t.Logf("      [%d] PTS=%s DTS=%s SeqID=%v Key=%v Codec=%v Hash=%s",
-						ctx.Index-len(ctx.Before)+bi, formatPTSForLog(f, result.BaseTimestamp), formatPTSForLog(f, result.BaseTimestamp), f.SequenceID, f.IsKeyFrame, f.Codec, frameHash(f)[:16])
+						ctx.Index-len(ctx.Before)+bi, formatPTSForLog(f, result.BaseTimestamp), formatPTSForLog(f, result.BaseTimestamp), f.SequenceID, f.IsKeyFrame, f.Codec, FrameHash(f)[:16])
 				}
 			}
 			if len(ctx.After) > 0 {
 				t.Logf("    After:")
 				for ai, f := range ctx.After {
 					t.Logf("      [%d] PTS=%s DTS=%s SeqID=%v Key=%v Codec=%v Hash=%s",
-						ctx.Index+1+ai, formatPTSForLog(f, result.BaseTimestamp), formatPTSForLog(f, result.BaseTimestamp), f.SequenceID, f.IsKeyFrame, f.Codec, frameHash(f)[:16])
+						ctx.Index+1+ai, formatPTSForLog(f, result.BaseTimestamp), formatPTSForLog(f, result.BaseTimestamp), f.SequenceID, f.IsKeyFrame, f.Codec, FrameHash(f)[:16])
 				}
 			}
 			if len(ctx.RefBefore) > 0 || len(ctx.RefAfter) > 0 {
@@ -1603,14 +1610,14 @@ func printEqualPacketRateBenchmark(t *testing.T, result EqualPacketRateBenchmark
 					t.Logf("      Before:")
 					for _, f := range ctx.RefBefore {
 						t.Logf("        PTS=%s DTS=%s SeqID=%v Key=%v Codec=%v Hash=%s",
-							formatPTSForLog(f, result.BaseTimestamp), formatPTSForLog(f, result.BaseTimestamp), f.SequenceID, f.IsKeyFrame, f.Codec, frameHash(f)[:16])
+							formatPTSForLog(f, result.BaseTimestamp), formatPTSForLog(f, result.BaseTimestamp), f.SequenceID, f.IsKeyFrame, f.Codec, FrameHash(f)[:16])
 					}
 				}
 				if len(ctx.RefAfter) > 0 {
 					t.Logf("      After:")
 					for _, f := range ctx.RefAfter {
 						t.Logf("        PTS=%s DTS=%s SeqID=%v Key=%v Codec=%v Hash=%s",
-							formatPTSForLog(f, result.BaseTimestamp), formatPTSForLog(f, result.BaseTimestamp), f.SequenceID, f.IsKeyFrame, f.Codec, frameHash(f)[:16])
+							formatPTSForLog(f, result.BaseTimestamp), formatPTSForLog(f, result.BaseTimestamp), f.SequenceID, f.IsKeyFrame, f.Codec, FrameHash(f)[:16])
 					}
 				}
 			}
@@ -1626,7 +1633,7 @@ func printEqualPacketRateBenchmark(t *testing.T, result EqualPacketRateBenchmark
 // ============================================================================
 
 // measureSwitchLatency measures the latency between switch commands and when new input appears
-func measureSwitchLatency(t *testing.T, videoFrames, audioFrames []*Frame, switchEvents []SwitchEvent) {
+func MeasureSwitchLatency(t *testing.T, videoFrames, audioFrames []*Frame, switchEvents []SwitchEvent) {
 	if len(switchEvents) == 0 {
 		return
 	}
@@ -1760,7 +1767,7 @@ func calculateSwitchLatencyStats(t *testing.T, results []SwitchLatencyResult, fr
 // ============================================================================
 
 // checkInputIDChanges detects and prints when InputID changes in the output stream
-func checkInputIDChanges(t *testing.T, frames []*Frame, frameType string) {
+func CheckInputIDChanges(t *testing.T, frames []*Frame, frameType string) {
 	if len(frames) == 0 {
 		return
 	}
@@ -1869,7 +1876,7 @@ func checkInputIDChanges(t *testing.T, frames []*Frame, frameType string) {
 
 // verifyGOPIDCorrectness verifies that any frame after a keyframe has the correct GOP_ID
 // GOP_ID should be the SequenceID of the last keyframe
-func verifyGOPIDCorrectness(t *testing.T, frames []*Frame) {
+func VerifyGOPIDCorrectness(t *testing.T, frames []*Frame) {
 	if len(frames) == 0 {
 		return
 	}
@@ -1982,4 +1989,107 @@ func isKeyFrame(frame *Frame) bool {
 	}
 
 	return false
+}
+
+// StreamInfo holds metadata about a media stream
+type StreamInfo struct {
+	// Video
+	Width        int
+	Height       int
+	FPS          float64
+	VideoCodec   string
+	PixFmt       string
+	VideoBitrate int // in kbps
+
+	// Audio
+	AudioChannels int
+	AudioRate     int // Hz
+	AudioCodec    string
+	AudioBitrate  int // in kbps
+
+	// Overall
+	Format   string
+	Duration float64 // seconds
+}
+
+// FFprobeJSON format
+type ffprobeOutput struct {
+	Format struct {
+		FormatName string `json:"format_name"`
+		Duration   string `json:"duration"`
+	} `json:"format"`
+	Streams []struct {
+		CodecName  string `json:"codec_name"`
+		Width      int    `json:"width,omitempty"`
+		Height     int    `json:"height,omitempty"`
+		PixFmt     string `json:"pix_fmt,omitempty"`
+		BitRate    string `json:"bit_rate,omitempty"`
+		RFrameRate string `json:"r_frame_rate,omitempty"`
+		Channels   int    `json:"channels,omitempty"`
+		SampleRate string `json:"sample_rate,omitempty"`
+	} `json:"streams"`
+}
+
+// ProbeStream extracts detailed stream info using ffprobe (single call)
+func ProbeStream(url string) (*StreamInfo, error) {
+	cmd := exec.Command("ffprobe",
+		"-v", "error",
+		"-show_entries", "format=format_name,duration",
+		"-show_entries", "stream",
+		"-of", "json",
+		url,
+	)
+
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("ffprobe error: %w", err)
+	}
+
+	var fp ffprobeOutput
+	if err := json.Unmarshal(out, &fp); err != nil {
+		return nil, fmt.Errorf("json unmarshal error: %w", err)
+	}
+
+	info := &StreamInfo{}
+	info.Format = fp.Format.FormatName
+	info.Duration, _ = strconv.ParseFloat(fp.Format.Duration, 64)
+
+	for _, s := range fp.Streams {
+		if s.Width > 0 && s.Height > 0 {
+			// Video stream
+			info.Width = s.Width
+			info.Height = s.Height
+			info.VideoCodec = s.CodecName
+			info.PixFmt = s.PixFmt
+			if s.BitRate != "" {
+				if v, err := strconv.Atoi(s.BitRate); err == nil {
+					info.VideoBitrate = v / 1000 // convert to kbps
+				}
+			}
+			// FPS
+			if s.RFrameRate != "" && s.RFrameRate != "0/0" {
+				parts := [2]float64{}
+				fmt.Sscanf(s.RFrameRate, "%f/%f", &parts[0], &parts[1])
+				if parts[1] != 0 {
+					info.FPS = parts[0] / parts[1]
+				}
+			}
+		} else if s.Channels > 0 {
+			// Audio stream
+			info.AudioChannels = s.Channels
+			info.AudioCodec = s.CodecName
+			if s.SampleRate != "" {
+				if sr, err := strconv.Atoi(s.SampleRate); err == nil {
+					info.AudioRate = sr
+				}
+			}
+			if s.BitRate != "" {
+				if v, err := strconv.Atoi(s.BitRate); err == nil {
+					info.AudioBitrate = v / 1000
+				}
+			}
+		}
+	}
+
+	return info, nil
 }

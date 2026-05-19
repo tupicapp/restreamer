@@ -1,10 +1,12 @@
-package irajstreamer
+package test
 
 import (
 	"context"
 	"fmt"
+	corehelpers "restreamer/core"
 	streaminputs "restreamer/core/inputs"
 	"restreamer/core/outputs"
+	testtools "restreamer/core/test_tools"
 	"testing"
 	"time"
 )
@@ -148,7 +150,7 @@ func testSwitchBetweenInputs(t *testing.T, inputs []inputSpec,
 	t.Logf("Parameters: RateControl=%v, genPTS=%v, PTSFilter=%v", rateControl, genPTS, ptsFilter)
 
 	// Create streamer with specified parameters
-	streamer := NewStreamer(rateControl, genPTS, ptsFilter)
+	streamer := corehelpers.NewStreamer()
 	defer streamer.Close()
 
 	streamer.StartLife()
@@ -251,7 +253,7 @@ func testSwitchBetweenInputs(t *testing.T, inputs []inputSpec,
 
 		switchTime := time.Now()
 		t.Logf("Switch %d: Switching to %s at %v for %v (current PTS: %v)", i+1, sw.InputID, sw.At, sw.Duration, lastPTSBeforeSwitch)
-		streamer.switchInput(sw.InputID)
+		streamer.Switch(sw.InputID)
 
 		// Record switch event
 		switchEvents = append(switchEvents, SwitchEvent{
@@ -289,11 +291,11 @@ func testSwitchBetweenInputs(t *testing.T, inputs []inputSpec,
 	}
 
 	// Check stream health
-	videoHealth := checkStreamHealth(destVideoFrames, "video")
-	audioHealth := checkStreamHealth(destAudioFrames, "audio")
+	videoHealth := testtools.CheckStreamHealth(destVideoFrames, "video")
+	audioHealth := testtools.CheckStreamHealth(destAudioFrames, "audio")
 
-	printStreamHealth(t, videoHealth, "video")
-	printStreamHealth(t, audioHealth, "audio")
+	testtools.PrintStreamHealth(t, videoHealth, "video")
+	testtools.PrintStreamHealth(t, audioHealth, "audio")
 
 	// Verify stream is healthy
 	if !videoHealth.IsHealthy {
@@ -335,16 +337,16 @@ func testSwitchBetweenInputs(t *testing.T, inputs []inputSpec,
 	}
 
 	// Verify GOP_ID correctness for video frames
-	verifyGOPIDCorrectness(t, destVideoFrames)
+	testtools.VerifyGOPIDCorrectness(t, destVideoFrames)
 
 	// Check and print InputID changes
-	checkInputIDChanges(t, destVideoFrames, "video")
+	testtools.CheckInputIDChanges(t, destVideoFrames, "video")
 	// checkInputIDChanges(t, destAudioFrames, "audio")
 
 	// os.Exit(1)
 
 	// Measure switch latency
-	measureSwitchLatency(t, destVideoFrames, destAudioFrames, switchEvents)
+	testtools.MeasureSwitchLatency(t, destVideoFrames, destAudioFrames, switchEvents)
 
 	// Ensure no drops while inputs are active (sequence continuity within each active window)
 	checkNoDropsDuringActive(t, destVideoFrames, switchEvents, "video")
@@ -360,27 +362,27 @@ func testSwitchBetweenInputs(t *testing.T, inputs []inputSpec,
 	// Use a more lenient threshold (20%) for switch test since switching can cause timing variations
 	threshold := 0.2
 	if len(destVideoFrames) > 0 {
-		checkFrameTiming(t, destVideoFrames, "video", actualTestDuration, actualTestDuration, threshold)
+		testtools.CheckFrameTiming(t, destVideoFrames, "video", actualTestDuration, actualTestDuration, threshold)
 		// checkSequenceIDContinuity(t, destVideoFrames, "video")
-		checkH264FrameHealth(t, destVideoFrames)
+		testtools.CheckH264FrameHealth(t, destVideoFrames)
 	}
 
 	if len(destAudioFrames) > 0 {
-		checkFrameTiming(t, destAudioFrames, "audio", actualTestDuration, actualTestDuration, threshold)
+		testtools.CheckFrameTiming(t, destAudioFrames, "audio", actualTestDuration, actualTestDuration, threshold)
 		// checkSequenceIDContinuity(t, destAudioFrames, "audio")
 	}
 
 	// DTS checks (same as PTS)
-	// dtsVideoFrames := cloneFramesWithDTSAsPTSSwitch(destVideoFrames)
-	// dtsAudioFrames := cloneFramesWithDTSAsPTSSwitch(destAudioFrames)
+	// dtsVideoFrames := cloneFramesWithDTSAsPTS(destVideoFrames)
+	// dtsAudioFrames := cloneFramesWithDTSAsPTS(destAudioFrames)
 
 	// if len(dtsVideoFrames) > 0 {
-	// 	checkFrameTiming(t, dtsVideoFrames, "video-dts", actualTestDuration, actualTestDuration, threshold)
+	// 	testtools.CheckFrameTiming(t, dtsVideoFrames, "video-dts", actualTestDuration, actualTestDuration, threshold)
 	// 	checkSequenceIDContinuity(t, dtsVideoFrames, "video-dts")
 	// }
 
 	// if len(dtsAudioFrames) > 0 {
-	// 	checkFrameTiming(t, dtsAudioFrames, "audio-dts", actualTestDuration, actualTestDuration, threshold)
+	// 	testtools.CheckFrameTiming(t, dtsAudioFrames, "audio-dts", actualTestDuration, actualTestDuration, threshold)
 	// 	checkSequenceIDContinuity(t, dtsAudioFrames, "audio-dts")
 	// }
 }
@@ -419,7 +421,7 @@ func checkNoDropsDuringActive(t *testing.T, frames []*Frame, switchEvents []Swit
 			windowStart.Sub(switchEvents[0].SwitchTime),
 			windowEnd.Sub(switchEvents[0].SwitchTime),
 			len(windowFrames))
-		checkSequenceIDContinuityForInput(t, windowFrames, frameType, event.TargetInputID)
+		testtools.CheckSequenceIDContinuityForInput(t, windowFrames, frameType, event.TargetInputID)
 	}
 }
 
@@ -504,7 +506,7 @@ func testHLSReaderTiming(t *testing.T, rateControl, genPTS, ptsFilter bool, play
 	t.Logf("Running streamer for %v", runDuration)
 
 	// Create streamer with specified parameters
-	streamer := NewStreamer(rateControl, genPTS, ptsFilter)
+	streamer := corehelpers.NewStreamer()
 	defer streamer.Close()
 
 	streamer.StartLife()
@@ -525,7 +527,7 @@ func testHLSReaderTiming(t *testing.T, rateControl, genPTS, ptsFilter bool, play
 
 	// Start the streamer
 	streamer.Start()
-	streamer.switchInput(inputID)
+	streamer.Switch(inputID)
 
 	// Wait for input to start
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -570,29 +572,29 @@ func testHLSReaderTiming(t *testing.T, rateControl, genPTS, ptsFilter bool, play
 
 	// Check video timing
 	if len(destVideoFrames) > 0 {
-		checkFrameTiming(t, destVideoFrames, "video", runDuration, actualElapsed, threshold)
-		checkSequenceIDContinuity(t, destVideoFrames, "video")
-		checkH264FrameHealth(t, destVideoFrames)
+		testtools.CheckFrameTiming(t, destVideoFrames, "video", runDuration, actualElapsed, threshold)
+		testtools.CheckSequenceIDContinuity(t, destVideoFrames, "video")
+		testtools.CheckH264FrameHealth(t, destVideoFrames)
 	}
 
 	// Check audio timing
 	if len(destAudioFrames) > 0 {
-		checkFrameTiming(t, destAudioFrames, "audio", runDuration, actualElapsed, threshold)
-		checkSequenceIDContinuity(t, destAudioFrames, "audio")
+		testtools.CheckFrameTiming(t, destAudioFrames, "audio", runDuration, actualElapsed, threshold)
+		testtools.CheckSequenceIDContinuity(t, destAudioFrames, "audio")
 	}
 
 	// DTS checks (same as PTS)
-	dtsVideoFrames := cloneFramesWithDTSAsPTSSwitch(destVideoFrames)
-	dtsAudioFrames := cloneFramesWithDTSAsPTSSwitch(destAudioFrames)
+	dtsVideoFrames := cloneFramesWithDTSAsPTS(destVideoFrames)
+	dtsAudioFrames := cloneFramesWithDTSAsPTS(destAudioFrames)
 
 	if len(dtsVideoFrames) > 0 {
-		checkFrameTiming(t, dtsVideoFrames, "video-dts", runDuration, actualElapsed, threshold)
-		checkSequenceIDContinuity(t, dtsVideoFrames, "video-dts")
+		testtools.CheckFrameTiming(t, dtsVideoFrames, "video-dts", runDuration, actualElapsed, threshold)
+		testtools.CheckSequenceIDContinuity(t, dtsVideoFrames, "video-dts")
 	}
 
 	if len(dtsAudioFrames) > 0 {
-		checkFrameTiming(t, dtsAudioFrames, "audio-dts", runDuration, actualElapsed, threshold)
-		checkSequenceIDContinuity(t, dtsAudioFrames, "audio-dts")
+		testtools.CheckFrameTiming(t, dtsAudioFrames, "audio-dts", runDuration, actualElapsed, threshold)
+		testtools.CheckSequenceIDContinuity(t, dtsAudioFrames, "audio-dts")
 	}
 }
 
@@ -666,7 +668,7 @@ func testRTMPReaderTiming(t *testing.T, rateControl, genPTS, ptsFilter bool, rtm
 	t.Logf("Running streamer for %v", runDuration)
 
 	// Create streamer with specified parameters
-	streamer := NewStreamer(rateControl, genPTS, ptsFilter)
+	streamer := corehelpers.NewStreamer()
 	defer streamer.Close()
 
 	streamer.StartLife()
@@ -687,7 +689,7 @@ func testRTMPReaderTiming(t *testing.T, rateControl, genPTS, ptsFilter bool, rtm
 
 	// Start the streamer
 	streamer.Start()
-	streamer.switchInput(inputID)
+	streamer.Switch(inputID)
 
 	// Wait for input to start
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -728,28 +730,28 @@ func testRTMPReaderTiming(t *testing.T, rateControl, genPTS, ptsFilter bool, rtm
 
 	// Check video timing
 	if len(destVideoFrames) > 0 {
-		checkFrameTiming(t, destVideoFrames, "video", runDuration, actualElapsed, threshold)
-		checkSequenceIDContinuity(t, destVideoFrames, "video")
-		checkH264FrameHealth(t, destVideoFrames)
+		testtools.CheckFrameTiming(t, destVideoFrames, "video", runDuration, actualElapsed, threshold)
+		testtools.CheckSequenceIDContinuity(t, destVideoFrames, "video")
+		testtools.CheckH264FrameHealth(t, destVideoFrames)
 	}
 
 	// Check audio timing
 	if len(destAudioFrames) > 0 {
-		checkFrameTiming(t, destAudioFrames, "audio", runDuration, actualElapsed, threshold)
-		checkSequenceIDContinuity(t, destAudioFrames, "audio")
+		testtools.CheckFrameTiming(t, destAudioFrames, "audio", runDuration, actualElapsed, threshold)
+		testtools.CheckSequenceIDContinuity(t, destAudioFrames, "audio")
 	}
 
 	// DTS checks (same as PTS)
-	dtsVideoFrames := cloneFramesWithDTSAsPTSSwitch(destVideoFrames)
-	dtsAudioFrames := cloneFramesWithDTSAsPTSSwitch(destAudioFrames)
+	dtsVideoFrames := cloneFramesWithDTSAsPTS(destVideoFrames)
+	dtsAudioFrames := cloneFramesWithDTSAsPTS(destAudioFrames)
 
 	if len(dtsVideoFrames) > 0 {
-		checkFrameTiming(t, dtsVideoFrames, "video-dts", runDuration, actualElapsed, threshold)
-		checkSequenceIDContinuity(t, dtsVideoFrames, "video-dts")
+		testtools.CheckFrameTiming(t, dtsVideoFrames, "video-dts", runDuration, actualElapsed, threshold)
+		testtools.CheckSequenceIDContinuity(t, dtsVideoFrames, "video-dts")
 	}
 
 	if len(dtsAudioFrames) > 0 {
-		checkFrameTiming(t, dtsAudioFrames, "audio-dts", runDuration, actualElapsed, threshold)
-		checkSequenceIDContinuity(t, dtsAudioFrames, "audio-dts")
+		testtools.CheckFrameTiming(t, dtsAudioFrames, "audio-dts", runDuration, actualElapsed, threshold)
+		testtools.CheckSequenceIDContinuity(t, dtsAudioFrames, "audio-dts")
 	}
 }

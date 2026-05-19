@@ -1,4 +1,4 @@
-package irajstreamer
+package test_tools
 
 import (
 	"context"
@@ -142,9 +142,9 @@ func isRTMPURLAvailable(rtmpURL string) bool {
 	return false
 }
 
-// setupHLSVideoServer sets up an HTTP server for an HLS video and returns the playlist URI
+// SetupHLSVideoServer sets up an HTTP server for an HLS video and returns the playlist URI
 // video.FilePath should be a full path like "testdata/hls/ts_1/index.m3u8" or relative like "2"
-func setupHLSVideoServer(t *testing.T, video TestVideoConfig) (string, *httptest.Server, error) {
+func SetupHLSVideoServer(t *testing.T, video TestVideoConfig) (string, *httptest.Server, error) {
 	if baseURL := strings.TrimSpace(os.Getenv("HLS_SERVER_URL")); baseURL != "" {
 		baseURL = strings.TrimRight(baseURL, "/")
 
@@ -407,4 +407,17 @@ func requireRTMPPublishing(t *testing.T, rtmpURL string, timeout time.Duration) 
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("RTMP not publishing or not reachable: %s (%v)", rtmpURL, err)
 	}
+}
+
+func addDefaultRTMPPort(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+
+	if !strings.Contains(u.Host, ":") {
+		u.Host = u.Host + ":1935"
+	}
+
+	return u.String()
 }

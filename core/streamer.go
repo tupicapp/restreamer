@@ -129,7 +129,7 @@ func WithRecorderConfig(cfg RecorderConfig) StreamerOption {
 	}
 }
 
-func NewStreamer(RateControl, genPTS, PTSFilter bool, opts ...StreamerOption) *Streamer {
+func NewStreamer(opts ...StreamerOption) *Streamer {
 	multicaster := NewMultiCaster()
 	streamer := &Streamer{
 		inputs:      make(map[string]Stream),
@@ -443,7 +443,7 @@ l1:
 				continue l1
 			}
 
-			fmt.Println("audio frame : ", audioFrame.PTS, audioFrame.SequenceID)
+			// fmt.Println("audio frame : ", audioFrame.PTS, audioFrame.SequenceID)
 
 			s.TotalAudioFrames++
 		case <-time.After(5 * time.Millisecond):
@@ -490,7 +490,7 @@ l1:
 				continue l1
 			}
 
-			fmt.Println("video frame : ", videoframe.PTS, videoframe.SequenceID, videoframe.PacketType)
+			// fmt.Println("video frame : ", videoframe.PTS, videoframe.SequenceID, videoframe.PacketType)
 
 			s.TotalVideoFrames++
 		case <-time.After(5 * time.Millisecond):
@@ -925,7 +925,7 @@ func normalizeProgramID(channelID, inputID string) string {
 	return filtered[len(filtered)-1]
 }
 
-func joinHLSPrefix(prefix string, suffixes ...string) string {
+func JoinHLSPrefix(prefix string, suffixes ...string) string {
 	return shared.JoinURLPrefix(prefix, suffixes...)
 }
 
@@ -1071,7 +1071,7 @@ func (s *Streamer) rewrittenPlaylist(folder shared.Folder, playlistName, urlPref
 	if err != nil {
 		return "", err
 	}
-	return rewriteHLSPlaylist(string(data), urlPrefix), nil
+	return RewriteHLSPlaylist(string(data), urlPrefix), nil
 }
 
 func (s *Streamer) inputHLSFolder(inputID string) shared.Folder {
@@ -1137,7 +1137,7 @@ func (s *Streamer) programRecordFoldersFromRoot() map[string]shared.Folder {
 	return folders
 }
 
-func rewriteHLSPlaylist(content, urlPrefix string) string {
+func RewriteHLSPlaylist(content, urlPrefix string) string {
 	var b strings.Builder
 	legacyPrefixes := legacyHLSRewritePrefixes(urlPrefix)
 	for _, line := range strings.SplitAfter(content, "\n") {

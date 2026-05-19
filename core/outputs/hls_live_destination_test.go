@@ -9,9 +9,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"restreamer/core/config"
-	"restreamer/core/storage"
 	"restreamer/core/shared"
-	"restreamer/core/test"
+	"restreamer/core/storage"
+	"restreamer/core/test_tools"
 	"sort"
 	"strconv"
 	"strings"
@@ -280,7 +280,7 @@ func assertHLSPlaylistLooksValid(t *testing.T, playlistPath string) {
 func assertHLSPlayableWithFFmpeg(t *testing.T, playlistPath string) {
 	t.Helper()
 
-	info, err := test.ProbeStream(playlistPath)
+	info, err := test_tools.ProbeStream(playlistPath)
 	if err != nil {
 		t.Fatalf("ffprobe failed on %s: %v", playlistPath, err)
 	}

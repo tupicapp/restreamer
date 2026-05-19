@@ -1,4 +1,4 @@
-package irajstreamer
+package test
 
 import (
 	"bytes"
@@ -10,9 +10,10 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	corehelpers "restreamer/core"
 	streaminputs "restreamer/core/inputs"
 	"restreamer/core/outputs"
-	"restreamer/core/test"
+	testtools "restreamer/core/test_tools"
 	"sort"
 	"strconv"
 	"strings"
@@ -266,7 +267,7 @@ func TestStreamer_HLSReaderLiveToBufferingDestination(t *testing.T) {
 
 func testHLSReaderToBufferingDestination(t *testing.T, rateControl, genPTS, ptsFilter bool, playlistURI string, refVideoFrames, refAudioFrames []*Frame) {
 	// Create streamer with specified parameters
-	streamer := NewStreamer(rateControl, genPTS, ptsFilter)
+	streamer := corehelpers.NewStreamer()
 	defer streamer.Close()
 
 	streamer.StartLife()
@@ -287,7 +288,7 @@ func testHLSReaderToBufferingDestination(t *testing.T, rateControl, genPTS, ptsF
 
 	// Start the streamer
 	streamer.Start()
-	streamer.switchInput(inputID)
+	streamer.Switch(inputID)
 
 	// Wait for input to start
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -465,8 +466,8 @@ func testHLSReaderToBufferingDestination(t *testing.T, rateControl, genPTS, ptsF
 		// PTS window vs elapsed time check is skipped for HLS (it's more relevant for live streams like RTMP)
 	}
 
-	videoWindowResult := windowMatchBenchmarkWithTiming(destVideoFrames, refVideoFrames, "video", actualElapsed, threshold)
-	printWindowMatchBenchmark(t, videoWindowResult, "video")
+	videoWindowResult := testtools.WindowMatchBenchmarkWithTiming(destVideoFrames, refVideoFrames, "video", actualElapsed, threshold)
+	testtools.PrintWindowMatchBenchmark(t, videoWindowResult, "video")
 	if len(videoWindowResult.MismatchContexts) > 0 {
 		t.Errorf("Video window-match benchmark: found %d mismatches", len(videoWindowResult.MismatchContexts))
 	}
@@ -474,8 +475,8 @@ func testHLSReaderToBufferingDestination(t *testing.T, rateControl, genPTS, ptsF
 		t.Errorf("Video window-match benchmark: match percent is %.2f%% (expected >= %.2f%%)", videoWindowResult.MatchPercent, (1.0-threshold)*100.0)
 	}
 
-	audioWindowResult := windowMatchBenchmarkWithTiming(destAudioFrames, refAudioFrames, "audio", actualElapsed, threshold)
-	printWindowMatchBenchmark(t, audioWindowResult, "audio")
+	audioWindowResult := testtools.WindowMatchBenchmarkWithTiming(destAudioFrames, refAudioFrames, "audio", actualElapsed, threshold)
+	testtools.PrintWindowMatchBenchmark(t, audioWindowResult, "audio")
 	if len(audioWindowResult.MismatchContexts) > 0 {
 		t.Errorf("Audio window-match benchmark: found %d mismatches", len(audioWindowResult.MismatchContexts))
 	}
@@ -485,8 +486,8 @@ func testHLSReaderToBufferingDestination(t *testing.T, rateControl, genPTS, ptsF
 
 	// Equal-Packet-Rate Benchmark for video
 	// Check if all reference packets exist in destination (reverse direction)
-	videoPacketRateResult := equalPacketRateBenchmark(refVideoFrames, destVideoFrames, "video")
-	printEqualPacketRateBenchmark(t, videoPacketRateResult, "video")
+	videoPacketRateResult := testtools.EqualPacketRateBenchmark(refVideoFrames, destVideoFrames, "video")
+	testtools.PrintEqualPacketRateBenchmark(t, videoPacketRateResult, "video")
 	if videoPacketRateResult.SuccessRate < 100.0 {
 		t.Errorf("Video equal-packet-rate benchmark: success rate is %.2f%% (expected 100%%), %d reference packets not found in destination",
 			videoPacketRateResult.SuccessRate, videoPacketRateResult.NotFoundPackets)
@@ -497,8 +498,8 @@ func testHLSReaderToBufferingDestination(t *testing.T, rateControl, genPTS, ptsF
 
 	// Equal-Packet-Rate Benchmark for audio
 	// Check if all reference packets exist in destination (reverse direction)
-	audioPacketRateResult := equalPacketRateBenchmark(refAudioFrames, destAudioFrames, "audio")
-	printEqualPacketRateBenchmark(t, audioPacketRateResult, "audio")
+	audioPacketRateResult := testtools.EqualPacketRateBenchmark(refAudioFrames, destAudioFrames, "audio")
+	testtools.PrintEqualPacketRateBenchmark(t, audioPacketRateResult, "audio")
 	if audioPacketRateResult.SuccessRate < 100.0 {
 		t.Errorf("Audio equal-packet-rate benchmark: success rate is %.2f%% (expected 100%%), %d reference packets not found in destination",
 			audioPacketRateResult.SuccessRate, audioPacketRateResult.NotFoundPackets)
@@ -508,7 +509,7 @@ func testHLSReaderToBufferingDestination(t *testing.T, rateControl, genPTS, ptsF
 	}
 
 	// Stream Health Check for destination video
-	videoHealth := checkStreamHealth(destVideoFrames, "video")
+	videoHealth := testtools.CheckStreamHealth(destVideoFrames, "video")
 	if !videoHealth.IsHealthy {
 		t.Logf("Destination video stream health: ⚠ Issues found (PTS monotonicity: %.2f%%, Valid gaps: %.2f%%, %d PTS issues, %d gap issues)",
 			videoHealth.MonotonicPTSPercent, videoHealth.ValidGapPercent,
@@ -535,7 +536,7 @@ func testHLSReaderToBufferingDestination(t *testing.T, rateControl, genPTS, ptsF
 	}
 
 	// Stream Health Check for destination audio
-	audioHealth := checkStreamHealth(destAudioFrames, "audio")
+	audioHealth := testtools.CheckStreamHealth(destAudioFrames, "audio")
 	if !audioHealth.IsHealthy {
 		t.Logf("Destination audio stream health: ⚠ Issues found (PTS monotonicity: %.2f%%, Valid gaps: %.2f%%, %d PTS issues, %d gap issues)",
 			audioHealth.MonotonicPTSPercent, audioHealth.ValidGapPercent,
@@ -567,8 +568,8 @@ func testHLSReaderToBufferingDestination(t *testing.T, rateControl, genPTS, ptsF
 	dtsDestAudio := cloneFramesWithDTSAsPTS(destAudioFrames)
 	dtsRefAudio := cloneFramesWithDTSAsPTS(refAudioFrames)
 
-	videoDTSWindow := windowMatchBenchmarkWithTiming(dtsDestVideo, dtsRefVideo, "video-dts", actualElapsed, threshold)
-	printWindowMatchBenchmark(t, videoDTSWindow, "video-dts")
+	videoDTSWindow := testtools.WindowMatchBenchmarkWithTiming(dtsDestVideo, dtsRefVideo, "video-dts", actualElapsed, threshold)
+	testtools.PrintWindowMatchBenchmark(t, videoDTSWindow, "video-dts")
 	if len(videoDTSWindow.MismatchContexts) > 0 {
 		t.Errorf("Video DTS window-match benchmark: found %d mismatches", len(videoDTSWindow.MismatchContexts))
 	}
@@ -576,8 +577,8 @@ func testHLSReaderToBufferingDestination(t *testing.T, rateControl, genPTS, ptsF
 		t.Errorf("Video DTS window-match benchmark: match percent is %.2f%% (expected >= %.2f%%)", videoDTSWindow.MatchPercent, (1.0-threshold)*100.0)
 	}
 
-	audioDTSWindow := windowMatchBenchmarkWithTiming(dtsDestAudio, dtsRefAudio, "audio-dts", actualElapsed, threshold)
-	printWindowMatchBenchmark(t, audioDTSWindow, "audio-dts")
+	audioDTSWindow := testtools.WindowMatchBenchmarkWithTiming(dtsDestAudio, dtsRefAudio, "audio-dts", actualElapsed, threshold)
+	testtools.PrintWindowMatchBenchmark(t, audioDTSWindow, "audio-dts")
 	if len(audioDTSWindow.MismatchContexts) > 0 {
 		t.Errorf("Audio DTS window-match benchmark: found %d mismatches", len(audioDTSWindow.MismatchContexts))
 	}
@@ -585,21 +586,21 @@ func testHLSReaderToBufferingDestination(t *testing.T, rateControl, genPTS, ptsF
 		t.Errorf("Audio DTS window-match benchmark: match percent is %.2f%% (expected >= %.2f%%)", audioDTSWindow.MatchPercent, (1.0-threshold)*100.0)
 	}
 
-	videoDTSPacketRate := equalPacketRateBenchmark(dtsDestVideo, dtsRefVideo, "video-dts")
-	printEqualPacketRateBenchmark(t, videoDTSPacketRate, "video-dts")
+	videoDTSPacketRate := testtools.EqualPacketRateBenchmark(dtsDestVideo, dtsRefVideo, "video-dts")
+	testtools.PrintEqualPacketRateBenchmark(t, videoDTSPacketRate, "video-dts")
 	if videoDTSPacketRate.SuccessRate < 100.0 || videoDTSPacketRate.NotFoundPackets > 0 {
 		t.Errorf("Video DTS equal-packet-rate: success rate %.2f%%, missing %d packets", videoDTSPacketRate.SuccessRate, videoDTSPacketRate.NotFoundPackets)
 	}
 
-	audioDTSPacketRate := equalPacketRateBenchmark(dtsDestAudio, dtsRefAudio, "audio-dts")
-	printEqualPacketRateBenchmark(t, audioDTSPacketRate, "audio-dts")
+	audioDTSPacketRate := testtools.EqualPacketRateBenchmark(dtsDestAudio, dtsRefAudio, "audio-dts")
+	testtools.PrintEqualPacketRateBenchmark(t, audioDTSPacketRate, "audio-dts")
 	if audioDTSPacketRate.SuccessRate < 100.0 || audioDTSPacketRate.NotFoundPackets > 0 {
 		t.Errorf("Audio DTS equal-packet-rate: success rate %.2f%%, missing %d packets", audioDTSPacketRate.SuccessRate, audioDTSPacketRate.NotFoundPackets)
 	}
 
-	videoDTSHealth := checkStreamHealth(destVideoFrames, "video-dts")
+	videoDTSHealth := testtools.CheckStreamHealth(destVideoFrames, "video-dts")
 	if !videoDTSHealth.IsHealthy {
-		printStreamHealth(t, videoDTSHealth, "video-dts")
+		testtools.PrintStreamHealth(t, videoDTSHealth, "video-dts")
 		t.Errorf("Destination video DTS health check failed: %d DTS issues, %d gap issues",
 			len(videoDTSHealth.DTSIssues), len(videoDTSHealth.LargeGapIssues))
 	} else {
@@ -607,9 +608,9 @@ func testHLSReaderToBufferingDestination(t *testing.T, rateControl, genPTS, ptsF
 			videoDTSHealth.MonotonicPTSPercent, videoDTSHealth.ValidGapPercent)
 	}
 
-	audioDTSHealth := checkStreamHealth(destAudioFrames, "audio-dts")
+	audioDTSHealth := testtools.CheckStreamHealth(destAudioFrames, "audio-dts")
 	if !audioDTSHealth.IsHealthy {
-		printStreamHealth(t, audioDTSHealth, "audio-dts")
+		testtools.PrintStreamHealth(t, audioDTSHealth, "audio-dts")
 		t.Errorf("Destination audio DTS health check failed: %d DTS issues, %d gap issues",
 			len(audioDTSHealth.DTSIssues), len(audioDTSHealth.LargeGapIssues))
 	} else {
@@ -625,7 +626,7 @@ func testHLSReaderToBufferingDestination(t *testing.T, rateControl, genPTS, ptsF
 func testHLSReaderLiveToBufferingDestination(t *testing.T, rateControl, genPTS, ptsFilter bool, playlistURI, streamName string) {
 	collectionDuration := 40 * time.Second
 
-	streamer := NewStreamer(rateControl, genPTS, ptsFilter)
+	streamer := corehelpers.NewStreamer()
 	defer streamer.Close()
 
 	streamer.StartLife()
@@ -646,7 +647,7 @@ func testHLSReaderLiveToBufferingDestination(t *testing.T, rateControl, genPTS, 
 
 	// Start the streamer
 	streamer.Start()
-	streamer.switchInput(inputID)
+	streamer.Switch(inputID)
 
 	time.Sleep(2 * time.Second)
 
@@ -677,11 +678,11 @@ func testHLSReaderLiveToBufferingDestination(t *testing.T, rateControl, genPTS, 
 	t.Logf("Destination collected: video=%d, audio=%d", len(destVideoFrames), len(destAudioFrames))
 
 	// Check stream health (same pattern as switch tests)
-	videoHealth := checkStreamHealth(destVideoFrames, "video")
-	audioHealth := checkStreamHealth(destAudioFrames, "audio")
+	videoHealth := testtools.CheckStreamHealth(destVideoFrames, "video")
+	audioHealth := testtools.CheckStreamHealth(destAudioFrames, "audio")
 
-	printStreamHealth(t, videoHealth, "video")
-	printStreamHealth(t, audioHealth, "audio")
+	testtools.PrintStreamHealth(t, videoHealth, "video")
+	testtools.PrintStreamHealth(t, audioHealth, "audio")
 
 	if !videoHealth.IsHealthy {
 		t.Errorf("Video stream is not healthy: Monotonic PTS: %.2f%%, Monotonic DTS: %.2f%%, Valid Gaps: %.2f%%, Valid DTS: %.2f%%",
@@ -909,7 +910,7 @@ func testRTMPReaderToBufferingDestination(t *testing.T, rateControl, genPTS, pts
 
 	// Start streamer and destination in parallel
 	t.Log("Starting streamer with buffering destination...")
-	streamer := NewStreamer(rateControl, genPTS, ptsFilter)
+	streamer := corehelpers.NewStreamer()
 	defer streamer.Close()
 
 	streamer.StartLife()
@@ -930,7 +931,7 @@ func testRTMPReaderToBufferingDestination(t *testing.T, rateControl, genPTS, pts
 
 	// Start the streamer
 	streamer.Start()
-	streamer.switchInput(inputID)
+	streamer.Switch(inputID)
 
 	// Wait for input to start
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -973,17 +974,17 @@ func testRTMPReaderToBufferingDestination(t *testing.T, rateControl, genPTS, pts
 		}
 
 		// Compare frames
-		res1 := windowMatchBenchmark(destVideoFrames, refVideoFrames, "video")
-		res2 := windowMatchBenchmark(destAudioFrames, refAudioFrames, "audio")
+		res1 := testtools.WindowMatchBenchmark(destVideoFrames, refVideoFrames, "video")
+		res2 := testtools.WindowMatchBenchmark(destAudioFrames, refAudioFrames, "audio")
 
-		res3 := equalPacketRateBenchmark(destVideoFrames, refVideoFrames, "video")
-		res4 := equalPacketRateBenchmark(destAudioFrames, refAudioFrames, "audio")
+		res3 := testtools.EqualPacketRateBenchmark(destVideoFrames, refVideoFrames, "video")
+		res4 := testtools.EqualPacketRateBenchmark(destAudioFrames, refAudioFrames, "audio")
 
-		printWindowMatchBenchmark(t, res1, "video")
-		printWindowMatchBenchmark(t, res2, "audio")
+		testtools.PrintWindowMatchBenchmark(t, res1, "video")
+		testtools.PrintWindowMatchBenchmark(t, res2, "audio")
 
-		printEqualPacketRateBenchmark(t, res3, "video")
-		printEqualPacketRateBenchmark(t, res4, "audio")
+		testtools.PrintEqualPacketRateBenchmark(t, res3, "video")
+		testtools.PrintEqualPacketRateBenchmark(t, res4, "audio")
 
 		// Compare frame sequences
 		// compareStreamerSequences(t, destVideoFrames, destAudioFrames, refVideoFrames, refAudioFrames)
@@ -1103,7 +1104,7 @@ func assertHLSPlaylistLooksValid(t *testing.T, playlistPath string) {
 func assertHLSPlayableWithFFmpeg(t *testing.T, playlistPath string) {
 	t.Helper()
 
-	info, err := test.ProbeStream(playlistPath)
+	info, err := corehelpers.ProbeStream(playlistPath)
 	if err != nil {
 		t.Fatalf("ffprobe failed on %s: %v", playlistPath, err)
 	}
@@ -1289,12 +1290,12 @@ func compareStreamerSequences(t *testing.T, destVideo, destAudio, refVideo, refA
 	// Compare video frames - match by hash instead of index
 	refVideoMap := make(map[string]*Frame)
 	for _, frame := range refVideo {
-		refVideoMap[frameHash(frame)] = frame
+		refVideoMap[testtools.FrameHash(frame)] = frame
 	}
 
 	matchedCount := 0
 	for i, dest := range destVideo {
-		destHash := frameHash(dest)
+		destHash := testtools.FrameHash(dest)
 		ref, found := refVideoMap[destHash]
 		if !found {
 			printLastMatchedFrames(t, lastMatchedVideoFrames, lastMatchedAudioFrames)
@@ -1360,8 +1361,8 @@ func compareStreamerSequences(t *testing.T, destVideo, destAudio, refVideo, refA
 		}
 
 		// Compare payload hash to ensure it's the same frame
-		destHash := frameHash(dest)
-		refHash := frameHash(ref)
+		destHash := testtools.FrameHash(dest)
+		refHash := testtools.FrameHash(ref)
 		if destHash != refHash {
 			printLastMatchedFrames(t, lastMatchedVideoFrames, lastMatchedAudioFrames)
 			printAudioContext(i, destAudio, refAudio, "Context")

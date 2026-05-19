@@ -54,8 +54,8 @@ var TestVideoList = []TestVideoConfig{
 	// or fallback URLs. They will be added dynamically in getTestRTMPVideos()
 }
 
-// GetTestHLSVideos returns a list of HLS video configurations that are available
-func GetTestHLSVideos(t *testing.T) []TestVideoConfig {
+// getTestHLSVideos returns a list of HLS video configurations that are available
+func getTestHLSVideos(t *testing.T) []TestVideoConfig {
 	testdataDir := findTestdataDirForTests()
 	if testdataDir == "" {
 		return []TestVideoConfig{}
@@ -79,8 +79,8 @@ func GetTestHLSVideos(t *testing.T) []TestVideoConfig {
 	return availableVideos
 }
 
-// GetTestRTMPVideos returns a list of RTMP video configurations that are available
-func GetTestRTMPVideos(t *testing.T) []TestVideoConfig {
+// getTestRTMPVideos returns a list of RTMP video configurations that are available
+func getTestRTMPVideos(t *testing.T) []TestVideoConfig {
 	var availableVideos []TestVideoConfig
 
 	// First, try environment variable
@@ -105,7 +105,7 @@ func GetTestRTMPVideos(t *testing.T) []TestVideoConfig {
 
 	for _, testURL := range testURLs {
 		// Try to connect to verify availability
-		if IsRTMPURLAvailable(testURL) {
+		if isRTMPURLAvailable(testURL) {
 			availableVideos = append(availableVideos, TestVideoConfig{
 				Name:        fmt.Sprintf("rtmp_%s", testURL),
 				FilePath:    testURL,
@@ -120,22 +120,9 @@ func GetTestRTMPVideos(t *testing.T) []TestVideoConfig {
 	return availableVideos
 }
 
-func AddDefaultRTMPPort(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return raw
-	}
-
-	if !strings.Contains(u.Host, ":") {
-		u.Host = u.Host + ":1935"
-	}
-
-	return u.String()
-}
-
-// IsRTMPURLAvailable checks if an RTMP URL is available by attempting to connect
-func IsRTMPURLAvailable(rtmpURL string) bool {
-	u, err := url.Parse(AddDefaultRTMPPort(rtmpURL))
+// isRTMPURLAvailable checks if an RTMP URL is available by attempting to connect
+func isRTMPURLAvailable(rtmpURL string) bool {
+	u, err := url.Parse(addDefaultRTMPPort(rtmpURL))
 	if err != nil {
 		return false
 	}
@@ -155,9 +142,9 @@ func IsRTMPURLAvailable(rtmpURL string) bool {
 	return false
 }
 
-// SetupHLSVideoServer sets up an HTTP server for an HLS video and returns the playlist URI
+// setupHLSVideoServer sets up an HTTP server for an HLS video and returns the playlist URI
 // video.FilePath should be a full path like "testdata/hls/ts_1/index.m3u8" or relative like "2"
-func SetupHLSVideoServer(t *testing.T, video TestVideoConfig) (string, *httptest.Server, error) {
+func setupHLSVideoServer(t *testing.T, video TestVideoConfig) (string, *httptest.Server, error) {
 	if baseURL := strings.TrimSpace(os.Getenv("HLS_SERVER_URL")); baseURL != "" {
 		baseURL = strings.TrimRight(baseURL, "/")
 
@@ -265,8 +252,8 @@ func findTestdataDirForTests() string {
 
 // getAllTestVideos returns all available test videos (HLS and RTMP)
 func getAllTestVideos(t *testing.T) ([]TestVideoConfig, []TestVideoConfig) {
-	hlsVideos := GetTestHLSVideos(t)
-	rtmpVideos := GetTestRTMPVideos(t)
+	hlsVideos := getTestHLSVideos(t)
+	rtmpVideos := getTestRTMPVideos(t)
 	return hlsVideos, rtmpVideos
 }
 
@@ -379,7 +366,7 @@ func getRTMPBaseURL(t *testing.T, rtmpURL string) string {
 		return ""
 	}
 
-	parsed, err := url.Parse(AddDefaultRTMPPort(rtmpURL))
+	parsed, err := url.Parse(addDefaultRTMPPort(rtmpURL))
 	if err != nil {
 		return ""
 	}
@@ -420,4 +407,17 @@ func requireRTMPPublishing(t *testing.T, rtmpURL string, timeout time.Duration) 
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("RTMP not publishing or not reachable: %s (%v)", rtmpURL, err)
 	}
+}
+
+func addDefaultRTMPPort(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+
+	if !strings.Contains(u.Host, ":") {
+		u.Host = u.Host + ":1935"
+	}
+
+	return u.String()
 }

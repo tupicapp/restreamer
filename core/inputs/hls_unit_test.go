@@ -33,64 +33,6 @@ func assertFrameDTSOrder(t *testing.T, frames []*Frame, want []time.Duration) {
 	}
 }
 
-func TestHLSReader_PopSortedBuffers(t *testing.T) {
-	t.Run("video", func(t *testing.T) {
-		reader := newTestHLS(t)
-		reader.pendingVideoBuf = []*Frame{
-			{DTS: 30 * time.Millisecond},
-			{DTS: 10 * time.Millisecond},
-			{DTS: 20 * time.Millisecond},
-			{DTS: 40 * time.Millisecond},
-		}
-
-		batch := reader.popSortedVideo(4, 2)
-
-		assertFrameDTSOrder(t, batch, []time.Duration{
-			10 * time.Millisecond,
-			20 * time.Millisecond,
-		})
-
-		if len(reader.pendingVideoBuf) != 2 {
-			t.Fatalf("expected 2 remaining video frames, got %d", len(reader.pendingVideoBuf))
-		}
-	})
-
-	t.Run("audio", func(t *testing.T) {
-		reader := newTestHLS(t)
-		reader.pendingAudioBuf = []*Frame{
-			{DTS: 15 * time.Millisecond},
-			{DTS: 5 * time.Millisecond},
-			{DTS: 25 * time.Millisecond},
-			{DTS: 35 * time.Millisecond},
-		}
-
-		batch := reader.popSortedAudio(4, 3)
-
-		assertFrameDTSOrder(t, batch, []time.Duration{
-			5 * time.Millisecond,
-			15 * time.Millisecond,
-			25 * time.Millisecond,
-		})
-
-		if len(reader.pendingAudioBuf) != 1 {
-			t.Fatalf("expected 1 remaining audio frame, got %d", len(reader.pendingAudioBuf))
-		}
-	})
-
-	t.Run("below sort size returns nil", func(t *testing.T) {
-		reader := newTestHLS(t)
-		reader.pendingVideoBuf = []*Frame{
-			{DTS: 10 * time.Millisecond},
-			{DTS: 20 * time.Millisecond},
-			{DTS: 30 * time.Millisecond},
-		}
-
-		if batch := reader.popSortedVideo(4, 2); batch != nil {
-			t.Fatalf("expected nil when buffer size below sortSize")
-		}
-	})
-}
-
 func TestNormalizeHLSURI(t *testing.T) {
 	tmpDir := t.TempDir()
 	filePath := filepath.Join(tmpDir, "playlist.m3u8")

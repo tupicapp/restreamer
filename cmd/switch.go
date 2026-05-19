@@ -352,7 +352,7 @@ func runSwitchCommand(parent context.Context, spec switchSpec) error {
 		outputStreams = append(outputStreams, stream)
 	}
 
-	streamer := core.NewStreamer(true, true, true)
+	streamer := core.NewStreamer()
 	streamer.StartLife()
 	defer streamer.Close()
 

@@ -39,7 +39,7 @@ func (s *Service) RunScene(ctx context.Context, spec SceneSpec, runSwitcher Swit
 	}
 	defer cleanup()
 
-	streamer := core.NewStreamer(true, true, true)
+	streamer := core.NewStreamer()
 	streamer.StartLife()
 	defer streamer.Close()
 
@@ -142,7 +142,7 @@ func (s *Service) RunMultiScene(ctx context.Context, spec MultiSceneSpec, runSwi
 	}
 	allStreams = append(allStreams, outputStream)
 
-	streamer := core.NewStreamer(true, true, true)
+	streamer := core.NewStreamer()
 	streamer.StartLife()
 	defer streamer.Close()
 
@@ -180,7 +180,7 @@ func (s *Service) runPassthroughSwitcher(ctx context.Context, spec SceneSpec, ru
 	}
 	defer cleanup()
 
-	streamer := core.NewStreamer(true, true, true)
+	streamer := core.NewStreamer()
 	streamer.StartLife()
 	defer streamer.Close()
 

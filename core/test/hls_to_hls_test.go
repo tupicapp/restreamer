@@ -1,4 +1,4 @@
-package irajstreamer
+package test
 
 import (
 	"context"
@@ -7,9 +7,11 @@ import (
 	"testing"
 	"time"
 
+	corehelpers "restreamer/core"
 	streaminputs "restreamer/core/inputs"
 	"restreamer/core/outputs"
 	"restreamer/core/storage"
+	testtools "restreamer/core/test_tools"
 )
 
 func mustListen(t *testing.T, addr string) net.Listener {
@@ -22,6 +24,7 @@ func mustListen(t *testing.T, addr string) net.Listener {
 }
 
 const miladNobURL = "http://localhost:8091/milad-nob/milad.m3u8"
+const aljaziraURL = "http://localhost:8091/milad-nob/milad.m3u8"
 
 // TestHLSLiveInputToHLSOutput_FramesMatch streams from a live HLS source through the
 // full input→streamer→HLS-output→re-read pipeline and verifies that the decoded
@@ -34,7 +37,7 @@ func TestHLSLiveInputToHLSOutput_FramesMatch(t *testing.T) {
 	// ── Step 1: collect reference frames directly from source ────────────────
 	t.Log("Step 1: collecting reference frames directly from source…")
 
-	refStreamer := NewStreamer(false, false, false)
+	refStreamer := corehelpers.NewStreamer()
 	defer refStreamer.Close()
 	refStreamer.StartLife()
 
@@ -45,7 +48,7 @@ func TestHLSLiveInputToHLSOutput_FramesMatch(t *testing.T) {
 		t.Fatalf("ref UpdateStreams: %v", err)
 	}
 	refStreamer.Start()
-	refStreamer.switchInput("ref-input")
+	refStreamer.Switch("ref-input")
 
 	{
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -74,7 +77,7 @@ func TestHLSLiveInputToHLSOutput_FramesMatch(t *testing.T) {
 		t.Fatalf("NewHLSLiveDestination: %v", err)
 	}
 
-	pipeStreamer := NewStreamer(false, false, false)
+	pipeStreamer := corehelpers.NewStreamer()
 	defer pipeStreamer.Close()
 	pipeStreamer.StartLife()
 
@@ -84,7 +87,7 @@ func TestHLSLiveInputToHLSOutput_FramesMatch(t *testing.T) {
 		t.Fatalf("pipe UpdateStreams: %v", err)
 	}
 	pipeStreamer.Start()
-	pipeStreamer.switchInput("pipe-input")
+	pipeStreamer.Switch("pipe-input")
 
 	{
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -117,7 +120,7 @@ func TestHLSLiveInputToHLSOutput_FramesMatch(t *testing.T) {
 	outInput := streaminputs.NewHLS("out-input", outPlaylistURL)
 	outBuf := outputs.NewBuffering("out-buf")
 
-	outStreamer := NewStreamer(false, false, false)
+	outStreamer := corehelpers.NewStreamer()
 	defer outStreamer.Close()
 	outStreamer.StartLife()
 
@@ -125,7 +128,7 @@ func TestHLSLiveInputToHLSOutput_FramesMatch(t *testing.T) {
 		t.Fatalf("out UpdateStreams: %v", err)
 	}
 	outStreamer.Start()
-	outStreamer.switchInput("out-input")
+	outStreamer.Switch("out-input")
 
 	{
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -159,16 +162,16 @@ func TestHLSLiveInputToHLSOutput_FramesMatch(t *testing.T) {
 
 	// ── Step 5: stream-health checks ─────────────────────────────────────────
 	t.Log("=== Reference stream health ===")
-	refVHealth := checkStreamHealth(refVideo, "ref-video")
-	refAHealth := checkStreamHealth(refAudio, "ref-audio")
-	printStreamHealth(t, refVHealth, "ref-video")
-	printStreamHealth(t, refAHealth, "ref-audio")
+	refVHealth := testtools.CheckStreamHealth(refVideo, "ref-video")
+	refAHealth := testtools.CheckStreamHealth(refAudio, "ref-audio")
+	testtools.PrintStreamHealth(t, refVHealth, "ref-video")
+	testtools.PrintStreamHealth(t, refAHealth, "ref-audio")
 
 	t.Log("=== Output stream health ===")
-	outVHealth := checkStreamHealth(outVideo, "out-video")
-	outAHealth := checkStreamHealth(outAudio, "out-audio")
-	printStreamHealth(t, outVHealth, "out-video")
-	printStreamHealth(t, outAHealth, "out-audio")
+	outVHealth := testtools.CheckStreamHealth(outVideo, "out-video")
+	outAHealth := testtools.CheckStreamHealth(outAudio, "out-audio")
+	testtools.PrintStreamHealth(t, outVHealth, "out-video")
+	testtools.PrintStreamHealth(t, outAHealth, "out-audio")
 
 	if !outVHealth.IsHealthy {
 		t.Errorf("output video stream unhealthy: monotonic-PTS=%.2f%% monotonic-DTS=%.2f%% valid-gaps=%.2f%% DTS-valid=%.2f%%",
@@ -199,10 +202,10 @@ func TestHLSLiveInputToHLSOutput_FramesMatch(t *testing.T) {
 	const threshold = 0.10
 	t.Log("=== Window-match comparison: reference vs output ===")
 
-	videoRes := windowMatchBenchmark(outVideo, refVideo, "video")
-	audioRes := windowMatchBenchmark(outAudio, refAudio, "audio")
-	printWindowMatchBenchmark(t, videoRes, "video")
-	printWindowMatchBenchmark(t, audioRes, "audio")
+	videoRes := testtools.WindowMatchBenchmark(outVideo, refVideo, "video")
+	audioRes := testtools.WindowMatchBenchmark(outAudio, refAudio, "audio")
+	testtools.PrintWindowMatchBenchmark(t, videoRes, "video")
+	testtools.PrintWindowMatchBenchmark(t, audioRes, "audio")
 
 	if videoRes.MatchPercent < (1.0-threshold)*100 {
 		t.Errorf("video match %.2f%% < required %.2f%% — output does not match input",

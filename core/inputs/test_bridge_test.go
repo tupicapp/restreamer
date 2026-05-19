@@ -2,44 +2,44 @@ package inputs
 
 import (
 	"net/http/httptest"
-	"restreamer/core/test"
+	"restreamer/core/test_tools"
 	"testing"
 	"time"
 )
 
-type TestVideoConfig = test.TestVideoConfig
-type WindowMatchBenchmarkResult = test.WindowMatchBenchmarkResult
+type TestVideoConfig = test_tools.TestVideoConfig
+type WindowMatchBenchmarkResult = test_tools.WindowMatchBenchmarkResult
 
 func setupHLSVideoServer(t *testing.T, video TestVideoConfig) (string, *httptest.Server, error) {
-	return test.SetupHLSVideoServer(t, video)
+	return test_tools.SetupHLSVideoServer(t, video)
 }
 
 func frameHash(frame *Frame) string {
-	return test.FrameHash(frame)
+	return test_tools.FrameHash(frame)
 }
 
 func windowMatchBenchmarkWithTiming(stream1, stream2 []*Frame, frameType string, elapsedTime time.Duration, threshold float64) WindowMatchBenchmarkResult {
-	return test.WindowMatchBenchmarkWithTiming(stream1, stream2, frameType, elapsedTime, threshold)
+	return test_tools.WindowMatchBenchmarkWithTiming(stream1, stream2, frameType, elapsedTime, threshold)
 }
 
 func printWindowMatchBenchmark(t *testing.T, result WindowMatchBenchmarkResult, frameType string) {
-	test.PrintWindowMatchBenchmark(t, result, frameType)
+	test_tools.PrintWindowMatchBenchmark(t, result, frameType)
 }
 
-func equalPacketRateBenchmark(stream1, stream2 []*Frame, frameType string) test.EqualPacketRateBenchmarkResult {
-	return test.EqualPacketRateBenchmark(stream1, stream2, frameType)
+func equalPacketRateBenchmark(stream1, stream2 []*Frame, frameType string) test_tools.EqualPacketRateBenchmarkResult {
+	return test_tools.EqualPacketRateBenchmark(stream1, stream2, frameType)
 }
 
-func printEqualPacketRateBenchmark(t *testing.T, result test.EqualPacketRateBenchmarkResult, frameType string) {
-	test.PrintEqualPacketRateBenchmark(t, result, frameType)
+func printEqualPacketRateBenchmark(t *testing.T, result test_tools.EqualPacketRateBenchmarkResult, frameType string) {
+	test_tools.PrintEqualPacketRateBenchmark(t, result, frameType)
 }
 
 func checkH264FrameHealth(t *testing.T, frames []*Frame) {
-	test.CheckH264FrameHealth(t, frames)
+	test_tools.CheckH264FrameHealth(t, frames)
 }
 
-func checkStreamHealth(frames []*Frame, frameType string) test.StreamHealthResult {
-	return test.CheckStreamHealth(frames, frameType)
+func checkStreamHealth(frames []*Frame, frameType string) test_tools.StreamHealthResult {
+	return test_tools.CheckStreamHealth(frames, frameType)
 }
 
 func stripAnnexB(nalu []byte) []byte {

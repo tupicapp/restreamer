@@ -1,6 +1,7 @@
-package irajstreamer
+package test
 
 import (
+	core "restreamer/core"
 	"strings"
 	"testing"
 )
@@ -13,7 +14,7 @@ func TestRewriteHLSPlaylist_RewritesRelativeSegmentURI(t *testing.T) {
 		"",
 	}, "\n")
 
-	got := rewriteHLSPlaylist(playlist, "/hls/channel-a/program-a")
+	got := core.RewriteHLSPlaylist(playlist, "/hls/channel-a/program-a")
 	if !strings.Contains(got, "/hls/channel-a/program-a/seg_000001.ts") {
 		t.Fatalf("expected relative segment URI to be rewritten, got: %s", got)
 	}
@@ -27,7 +28,7 @@ func TestRewriteHLSPlaylist_DoesNotRewriteAbsoluteSegmentURI(t *testing.T) {
 		"",
 	}, "\n")
 
-	got := rewriteHLSPlaylist(playlist, "/hls/channel-a/program-a")
+	got := core.RewriteHLSPlaylist(playlist, "/hls/channel-a/program-a")
 	if !strings.Contains(got, "/v1/restream/hls/channel-a/program-a/seg_000001.ts") {
 		t.Fatalf("expected absolute segment URI to remain unchanged, got: %s", got)
 	}
@@ -44,7 +45,7 @@ func TestRewriteHLSPlaylist_RewritesLegacyRootRelativeProgramURIToConfiguredPref
 		"",
 	}, "\n")
 
-	got := rewriteHLSPlaylist(playlist, "http://hello/channel-a/program-a")
+	got := core.RewriteHLSPlaylist(playlist, "http://hello/channel-a/program-a")
 	if !strings.Contains(got, "http://hello/channel-a/program-a/seg_000001.ts") {
 		t.Fatalf("expected legacy root-relative URI to be rewritten, got: %s", got)
 	}
@@ -54,7 +55,7 @@ func TestRewriteHLSPlaylist_RewritesLegacyRootRelativeProgramURIToConfiguredPref
 }
 
 func TestJoinHLSPrefix_URLBase(t *testing.T) {
-	got := joinHLSPrefix("https://cdn.example.com/v1/restream/hls", "channel-a", "program-a")
+	got := core.JoinHLSPrefix("https://cdn.example.com/v1/restream/hls", "channel-a", "program-a")
 	want := "https://cdn.example.com/v1/restream/hls/channel-a/program-a"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
