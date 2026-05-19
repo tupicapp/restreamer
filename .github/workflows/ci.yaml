@@ -16,14 +16,7 @@ jobs:
       rtmp:
         image: bluenviron/mediamtx:1
         ports:
-          - 1935:1935
-    env:
-      RTMP_BASE_URL: rtmp://127.0.0.1:1935/live/
-      RTMP_URL: rtmp://127.0.0.1:1935/live/1
-      RTMP_HOST: 127.0.0.1
-      RTMP_PORT: 1935
-      HLS_SERVER_URL: http://127.0.0.1:8091
-      HLS_LIVE_URL: https://live-hls-web-aja-fa.getaj.net/AJA/03.m3u8
+          - 1938:1935
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
