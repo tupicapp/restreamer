@@ -50,6 +50,28 @@ func TestBuildRawSceneSpec_DerivesCanvasFromLayouts(t *testing.T) {
 	}
 }
 
+func TestBuildRawSceneSpec_PreservesOptionalLayoutFields(t *testing.T) {
+	spec, err := buildRawSceneSpec(rawSceneCommandOptions{
+		streamID:       "raw-optional-layout",
+		inputs:         []string{"rtmp://localhost/live/a", "rtmp://localhost/live/b"},
+		layouts:        []string{"0,0,640,360,1,0.10", "320,180,640,360,5,0.35"},
+		output:         "rtmp://localhost/live/out",
+		audioFrom:      0,
+		outputFPS:      25,
+		startupTimeout: 30 * time.Second,
+	}, nil)
+	if err != nil {
+		t.Fatalf("buildRawSceneSpec returned error: %v", err)
+	}
+
+	if spec.layouts[0].ZIndex != 1 || spec.layouts[0].Transparency != 0.10 {
+		t.Fatalf("unexpected first layout optional fields: %+v", spec.layouts[0])
+	}
+	if spec.layouts[1].ZIndex != 5 || spec.layouts[1].Transparency != 0.35 {
+		t.Fatalf("unexpected second layout optional fields: %+v", spec.layouts[1])
+	}
+}
+
 func TestBuildRawSceneSpec_RejectsMismatchedInputLayoutCount(t *testing.T) {
 	_, err := buildRawSceneSpec(rawSceneCommandOptions{
 		streamID:       "raw-3",
@@ -74,5 +96,30 @@ func TestShouldShowRawSceneHelp(t *testing.T) {
 		inputs: []string{"rtmp://localhost/live/a"},
 	}, nil) {
 		t.Fatal("expected invocation with inputs to skip help shortcut")
+	}
+}
+
+func TestRawSceneCommand_LayoutFlagPreservesCommaSeparatedValue(t *testing.T) {
+	cmd := NewRawSceneCommand()
+
+	if err := cmd.ParseFlags([]string{
+		"-i", "rtmp://127.0.0.1:1938/live/1",
+		"--layout", "0,0,640,360,1,0.10",
+		"-i", "rtmp://127.0.0.1:1938/live/2",
+		"--layout", "640,0,640,360,5,0.35",
+		"--canvas", "1280x360",
+	}); err != nil {
+		t.Fatalf("ParseFlags returned error: %v", err)
+	}
+
+	layouts, err := cmd.Flags().GetStringArray("layout")
+	if err != nil {
+		t.Fatalf("GetStringArray returned error: %v", err)
+	}
+	if len(layouts) != 2 {
+		t.Fatalf("expected 2 layout values, got %d (%v)", len(layouts), layouts)
+	}
+	if layouts[0] != "0,0,640,360,1,0.10" || layouts[1] != "640,0,640,360,5,0.35" {
+		t.Fatalf("unexpected layout values: %v", layouts)
 	}
 }

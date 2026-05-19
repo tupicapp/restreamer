@@ -21,10 +21,8 @@ go run irajstreamer/main.go switch \
 CGO_CFLAGS= CGO_CPPFLAGS= CGO_CXXFLAGS= CGO_LDFLAGS= CGO_FFLAGS= \
 go run -tags 'cgo media' irajstreamer/main.go rawscene \
   --stream-id raw-scene-1 \
-  -i rtmp://127.0.0.1:1938/live/cam1 --layout 0,0,640,360 \
-  -i rtmp://127.0.0.1:1938/live/cam2 --layout 640,0,640,360 \
-  -i rtmp://127.0.0.1:1938/live/cam3 --layout 0,360,640,360 \
-  -i rtmp://127.0.0.1:1938/live/cam4 --layout 640,360,640,360 \
+  -i rtmp://127.0.0.1:1938/live/cam1 --layout 0,0,1280,720,0,0 \
+  -i rtmp://127.0.0.1:1938/live/cam2 --layout 880,40,360,200,10,0.20 \
   --canvas 1280x720 \
   -o rtmp://127.0.0.1:1938/live/out
 ```
@@ -52,3 +50,4 @@ make go-media-run ARGS="rawscene --stream-id raw-scene-1 -i rtmp://127.0.0.1:193
 - Each `RawStreamer` input is supervised independently with a minimal `initial/live/dead` lifecycle. If an input session ends or stops producing IO past its restart interval, the slot keeps its last decoded video frame while a replacement session is attached; when fresh frames arrive again for that logical input, the slot resumes live updates automatically without disturbing the output encoder clock.
 - `RawStreamer` now keeps audio output stable through a buffered AAC encode path for both selected-input audio and mixed audio. When resampling is required, it normalizes to AAC-LC stereo at `48000 Hz` using a stateful per-input FFmpeg `swresample` pipeline with an explicit high-quality profile instead of per-frame default conversion.
 - Current raw-streamer codec coverage is intentionally narrow: `rawvideo` and `h264` for video ingest, `h264` for video output, and AAC for audio passthrough/mix flows.
+- Scene layouts support optional `z-index` and transparency in both `scene` and `rawscene`: `x,y,width,height[,z[,transparency]]`. `RawStreamer` passes those layout values through unchanged, and the default `Composer` applies the layer order and blending.

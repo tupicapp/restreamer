@@ -101,6 +101,11 @@ It composes multiple raw inputs into a single raw output frame using layout data
 - z-index
 - transparency
 
+`RawStreamer` carries those layout fields through with each placement, but the
+actual layer ordering and alpha blending live in the raw processor. For the
+default scene implementation, `Composer` sorts by `z-index` and blends each
+placement using `transparency`.
+
 This is the current scene implementation.
 
 ## Scenes Are A Usage Of RawStreamer
