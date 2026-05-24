@@ -28,6 +28,11 @@ type rtmpInputStream struct {
 
 	audioConfigMu sync.RWMutex
 	audioConfig   []byte
+	audioRate     int
+
+	trackInfoMu sync.RWMutex
+	trackInfo   InputTrackInfo
+	trackInfoCh chan InputTrackInfo
 
 	IsStarted   bool
 	IsInitiated bool
@@ -79,13 +84,14 @@ type rtmpInputStream struct {
 
 func NewRTMP(id string, rawurl string) Stream {
 	s := &rtmpInputStream{
-		id:        id,
-		url:       rawurl,
-		videoChan: make(chan *Frame, 100),
-		audioChan: make(chan *Frame, 100),
-		done:      make(chan struct{}),
-		started:   make(chan struct{}),
-		events:    shared.NewEventEmitter(128),
+		id:          id,
+		url:         rawurl,
+		videoChan:   make(chan *Frame, 100),
+		audioChan:   make(chan *Frame, 100),
+		done:        make(chan struct{}),
+		started:     make(chan struct{}),
+		events:      shared.NewEventEmitter(128),
+		trackInfoCh: make(chan InputTrackInfo, 8),
 	}
 
 	videoRing, err := ringbuffer.New(128)
@@ -118,6 +124,21 @@ func (s *rtmpInputStream) AudioSpecificConfig() []byte {
 		return nil
 	}
 	return append([]byte(nil), s.audioConfig...)
+}
+
+func (s *rtmpInputStream) TrackInfoSnapshot() InputTrackInfo {
+	s.trackInfoMu.RLock()
+	defer s.trackInfoMu.RUnlock()
+
+	info := s.trackInfo
+	if len(info.AudioConfig) > 0 {
+		info.AudioConfig = append([]byte(nil), info.AudioConfig...)
+	}
+	return info
+}
+
+func (s *rtmpInputStream) TrackInfoChan() <-chan InputTrackInfo {
+	return s.trackInfoCh
 }
 
 func (s *rtmpInputStream) Start() {
@@ -365,6 +386,7 @@ func (s *rtmpInputStream) bufferAudioPacket(pts time.Duration, au []byte) {
 		Duration:   duration,
 		Payload:    [][]byte{au},
 		Codec:      "aac",
+		SampleRate: s.audioSampleRate(),
 		Timestamp:  time.Now(),
 		InputID:    s.id,
 		IsKeyFrame: true,
@@ -394,20 +416,29 @@ func (s *rtmpInputStream) bufferAudioPacket(pts time.Duration, au []byte) {
 }
 
 func (s *rtmpInputStream) initTracks(r *gortmplib.Reader) {
+	info := InputTrackInfo{Initialized: true}
 
 	for _, track := range r.Tracks() {
+		if track == nil || track.Codec == nil {
+			continue
+		}
 
 		switch codec := track.Codec.(type) {
 		case *codecs.H264:
+			info.HasVideo = true
 			r.OnDataH264(track, func(pts, dts time.Duration, au [][]byte) {
 				s.bufferVideoPacket(pts, dts, au)
 			})
 		case *codecs.MPEG4Audio:
+			info.HasAudio = true
 			if codec.Config != nil {
 				if config, err := codec.Config.Marshal(); err == nil && len(config) > 0 {
 					s.audioConfigMu.Lock()
 					s.audioConfig = append(s.audioConfig[:0], config...)
+					s.audioRate = codec.Config.SampleRate
 					s.audioConfigMu.Unlock()
+					info.AudioConfig = append(info.AudioConfig[:0], config...)
+					info.AudioSampleRate = codec.Config.SampleRate
 				}
 			}
 			r.OnDataMPEG4Audio(track, func(pts time.Duration, au []byte) {
@@ -462,6 +493,11 @@ func (s *rtmpInputStream) initTracks(r *gortmplib.Reader) {
 			})
 		}
 	}
+
+	if info.HasAudio && info.AudioSampleRate == 0 {
+		info.AudioSampleRate = s.audioSampleRate()
+	}
+	s.publishTrackInfo(info)
 }
 
 func (s *rtmpInputStream) Stop() {
@@ -522,4 +558,36 @@ func (s *rtmpInputStream) State() *State {
 		AudioFps:           s.AudioFps,
 		VideoFps:           s.VideoFps,
 	}
+}
+
+func (s *rtmpInputStream) publishTrackInfo(info InputTrackInfo) {
+	if len(info.AudioConfig) > 0 {
+		info.AudioConfig = append([]byte(nil), info.AudioConfig...)
+	}
+
+	s.trackInfoMu.Lock()
+	s.trackInfo = info
+	s.trackInfoMu.Unlock()
+
+	select {
+	case s.trackInfoCh <- info:
+	default:
+		select {
+		case <-s.trackInfoCh:
+		default:
+		}
+		select {
+		case s.trackInfoCh <- info:
+		default:
+		}
+	}
+}
+
+func (s *rtmpInputStream) audioSampleRate() int {
+	s.audioConfigMu.RLock()
+	defer s.audioConfigMu.RUnlock()
+	if s.audioRate > 0 {
+		return s.audioRate
+	}
+	return DefaultAudioRate
 }

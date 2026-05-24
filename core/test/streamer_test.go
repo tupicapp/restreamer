@@ -4,10 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	corehelpers "github.com/tupicapp/restreamer/core"
-	streaminputs "github.com/tupicapp/restreamer/core/inputs"
-	"github.com/tupicapp/restreamer/core/outputs"
-	testtools "github.com/tupicapp/restreamer/core/test_tools"
 	"io"
 	"net/url"
 	"os"
@@ -21,11 +17,16 @@ import (
 	"testing"
 	"time"
 
+	corehelpers "github.com/tupicapp/restreamer/core"
+	streaminputs "github.com/tupicapp/restreamer/core/inputs"
+	"github.com/tupicapp/restreamer/core/outputs"
+	testtools "github.com/tupicapp/restreamer/core/test_tools"
+
 	"github.com/bluenviron/gortmplib"
 	"github.com/bluenviron/gortmplib/pkg/codecs"
 )
 
-const defaultFFmpegRTMPURL = "rtmp://127.0.0.1:1938/live/"
+const defaultFFmpegRTMPURL = testRTMPBaseURL
 
 // referenceRTMPReader reads RTMP stream directly using gortmplib.Reader (reference implementation)
 func referenceRTMPReader(rtmpURL string, timeout time.Duration) ([]*Frame, []*Frame, error) {
@@ -150,17 +151,10 @@ func TestStreamer_HLSReaderToBufferingDestination(t *testing.T) {
 	hlsVideos := []TestVideoConfig{
 		{
 			Name:        "hls_video_1",
-			FilePath:    getConfiguredHLSFixtureURL("testdata/stream.m3u8"),
+			FilePath:    getConfiguredHLSFixtureURL(testHLSFixtureRelativePath),
 			Description: "Primary HLS test fixture",
 			Skip:        false,
 		},
-		// {
-		// 	Name:        "hls_video_2",
-		// 	FilePath:    "testdata/hls/m4s/stream_2/playlist.m3u8",
-		// 	Description: "M4S HLS test video",
-		// 	Skip:        false,
-		// },
-		// Add more videos here as needed
 	}
 
 	// Test all combinations of streamer parameters

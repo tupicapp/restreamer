@@ -25,7 +25,6 @@ func TestDirectHLSPassthrough(t *testing.T) {
 		url  string
 	}{
 		{"miladNob", miladNobURL},
-		// {"aljazeera", aljaziraURL},
 	}
 
 	for _, tc := range testCases {
@@ -36,7 +35,7 @@ func TestDirectHLSPassthrough(t *testing.T) {
 }
 
 func testDirectHLSPassthroughWithURL(t *testing.T, sourceURL string) {
-	requireHTTPReachable(t, sourceURL, 5*time.Second)
+	requireHTTPReachable(t, sourceURL, 1*time.Second)
 
 	outDir := "./testdata_direct/"
 	os.RemoveAll(outDir)

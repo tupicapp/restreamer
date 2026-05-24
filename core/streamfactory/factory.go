@@ -27,7 +27,8 @@ const (
 func NewInput(id, streamURL string) (core.Stream, error) {
 	switch detectInputKind(streamURL) {
 	case streamKindRTMP:
-		return inputs.NewRTMP(id, streamURL), nil
+		return inputs.NewCompatibleInput(inputs.NewRTMP(id, streamURL),
+			inputs.WithCompatRuntimeDetection(false)), nil
 	case streamKindFile, streamKindHLSLive:
 		// Probe the playlist: #EXT-X-ENDLIST → VOD/file, absent → live.
 		// OptionWithRealTime applies only to the VOD path (hlsInput).

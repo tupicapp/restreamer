@@ -2,13 +2,12 @@ package test
 
 import (
 	"context"
-	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -54,77 +53,6 @@ var TestVideoList = []TestVideoConfig{
 	// or fallback URLs. They will be added dynamically in getTestRTMPVideos()
 }
 
-// getTestHLSVideos returns a list of HLS video configurations that are available
-func getTestHLSVideos(t *testing.T) []TestVideoConfig {
-	testdataDir := findTestdataDirForTests()
-	if testdataDir == "" {
-		return []TestVideoConfig{}
-	}
-
-	var availableVideos []TestVideoConfig
-	for _, video := range TestVideoList {
-		// Skip RTMP URLs (they start with "rtmp://")
-		if strings.HasPrefix(video.FilePath, "rtmp://") || video.Skip {
-			continue
-		}
-
-		fullPath := resolveTestVideoPath(testdataDir, video.FilePath)
-		if fullPath == "" {
-			t.Logf("Skipping HLS video '%s' (%s): unsupported fixture path", video.Name, video.FilePath)
-			continue
-		}
-
-		if _, err := os.Stat(fullPath); err == nil {
-			availableVideos = append(availableVideos, video)
-		} else {
-			t.Logf("Skipping HLS video '%s' (%s): fixture not found: %v", video.Name, video.FilePath, err)
-		}
-	}
-
-	return availableVideos
-}
-
-// getTestRTMPVideos returns a list of RTMP video configurations that are available
-func getTestRTMPVideos(t *testing.T) []TestVideoConfig {
-	var availableVideos []TestVideoConfig
-
-	// First, try environment variable
-	rtmpURL := os.Getenv("RTMP_URL")
-	if rtmpURL != "" {
-		availableVideos = append(availableVideos, TestVideoConfig{
-			Name:        "rtmp_env",
-			FilePath:    rtmpURL,
-			Description: "RTMP URL from RTMP_URL environment variable",
-			Skip:        false,
-		})
-		return availableVideos
-	}
-
-	// Try common test RTMP URLs
-	testURLs := []string{
-		"rtmp://localhost:1938/live/1",
-		"rtmp://127.0.0.1:1938/live/1",
-		"rtmp://localhost:1935/live/test",
-		"rtmp://127.0.0.1:1935/live/test",
-	}
-
-	for _, testURL := range testURLs {
-		// Try to connect to verify availability
-		if isRTMPURLAvailable(testURL) {
-			availableVideos = append(availableVideos, TestVideoConfig{
-				Name:        fmt.Sprintf("rtmp_%s", testURL),
-				FilePath:    testURL,
-				Description: fmt.Sprintf("RTMP URL: %s", testURL),
-				Skip:        false,
-			})
-			// Return first available
-			return availableVideos
-		}
-	}
-
-	return availableVideos
-}
-
 // isRTMPURLAvailable checks if an RTMP URL is available by attempting to connect
 func isRTMPURLAvailable(rtmpURL string) bool {
 	u, err := url.Parse(addDefaultRTMPPort(rtmpURL))
@@ -147,130 +75,49 @@ func isRTMPURLAvailable(rtmpURL string) bool {
 	return false
 }
 
-// setupHLSVideoServer sets up an HTTP server for an HLS video and returns the playlist URI
-// video.FilePath should be a full path like "testdata/hls/ts_1/index.m3u8" or relative like "2"
-func setupHLSVideoServer(t *testing.T, video TestVideoConfig) (string, *httptest.Server, error) {
-	if baseURL := strings.TrimSpace(os.Getenv("HLS_SERVER_URL")); baseURL != "" {
-		baseURL = strings.TrimRight(baseURL, "/")
-
-		if strings.HasPrefix(video.FilePath, "http://") || strings.HasPrefix(video.FilePath, "https://") {
-			requireHTTPReachable(t, video.FilePath, 5*time.Second)
-			return video.FilePath, nil, nil
-		}
-
-		if strings.Contains(video.FilePath, "testdata/") {
-			relativePath := strings.TrimPrefix(video.FilePath, "/")
-			playlistURI := fmt.Sprintf("%s/%s", baseURL, relativePath)
-			requireHTTPReachable(t, playlistURI, 5*time.Second)
-			return playlistURI, nil, nil
-		}
-
-		playlistURI := fmt.Sprintf("%s/testdata/hls/%s/index.m3u8", baseURL, video.FilePath)
-		requireHTTPReachable(t, playlistURI, 5*time.Second)
-		return playlistURI, nil, nil
-	}
-
-	// Check if it's a full path (contains testdata/hls) or relative path
-	if strings.Contains(video.FilePath, "testdata/") {
-		// Full path like "testdata/stream.m3u8" or "testdata/hls/ts_1/index.m3u8"
-		testdataDir := findTestdataDirForTests()
-		if testdataDir == "" {
-			return "", nil, fmt.Errorf("testdata directory not found")
-		}
-
-		fullPath := resolveTestVideoPath(testdataDir, video.FilePath)
-		if fullPath == "" {
-			return "", nil, fmt.Errorf("unsupported HLS fixture path %q", video.FilePath)
-		}
-
-		if _, err := os.Stat(fullPath); err != nil {
-			return "", nil, fmt.Errorf("HLS playlist file not found: %v", err)
-		}
-
-		relativePath := strings.TrimPrefix(video.FilePath, "testdata/")
-		fileServer := httptest.NewServer(http.FileServer(http.Dir(testdataDir)))
-		playlistURI := fmt.Sprintf("%s/%s", fileServer.URL, relativePath)
-
-		return playlistURI, fileServer, nil
-	} else {
-		// Relative path like "2" - old format for backward compatibility
-		testdataDir := findTestdataDirForTests()
-		if testdataDir == "" {
-			return "", nil, fmt.Errorf("testdata/hls directory not found")
-		}
-
-		hlsDir := filepath.Join(testdataDir, "hls", video.FilePath)
-		if _, err := os.Stat(hlsDir); err != nil {
-			return "", nil, fmt.Errorf("HLS directory not found: %v", err)
-		}
-
-		// Start HTTP file server for HLS
-		fileServer := httptest.NewServer(http.FileServer(http.Dir(filepath.Join(testdataDir, "hls"))))
-		playlistURI := fmt.Sprintf("%s/%s/index.m3u8", fileServer.URL, video.FilePath)
-
-		return playlistURI, fileServer, nil
-	}
-}
-
-func resolveTestVideoPath(testdataDir, filePath string) string {
-	if testdataDir == "" || filePath == "" {
+func resolveTestFixturePath(relativePath string) string {
+	if relativePath == "" {
 		return ""
 	}
 
-	if strings.Contains(filePath, "testdata/") {
-		relativePath := strings.TrimPrefix(filePath, "testdata/")
-		return filepath.Join(testdataDir, relativePath)
-	}
-
-	return filepath.Join(testdataDir, "hls", filePath)
-}
-
-// findTestdataDirForTests finds the testdata directory for tests
-// This is a wrapper that can be used by test_config.go
-func findTestdataDirForTests() string {
-	// Try to find testdata directory by walking up from current directory
-	dir, err := os.Getwd()
-	if err != nil {
+	repoRoot := testRepoRootDir()
+	if repoRoot == "" {
 		return ""
 	}
 
-	for {
-		testdataPath := filepath.Join(dir, "testdata")
-		if _, err := os.Stat(testdataPath); err == nil {
-			return testdataPath
-		}
-
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
-	}
-
-	// Try common relative paths
-	testPaths := []string{
-		"testdata",
-		"../../testdata",
-		"../testdata",
-		"./testdata",
-	}
-
-	for _, path := range testPaths {
-		if absPath, err := filepath.Abs(path); err == nil {
-			if stat, err := os.Stat(absPath); err == nil && stat.IsDir() {
-				return absPath
-			}
-		}
-	}
-
-	return ""
+	return filepath.Join(repoRoot, filepath.FromSlash(strings.TrimPrefix(relativePath, "/")))
 }
 
-// getAllTestVideos returns all available test videos (HLS and RTMP)
-func getAllTestVideos(t *testing.T) ([]TestVideoConfig, []TestVideoConfig) {
-	hlsVideos := getTestHLSVideos(t)
-	rtmpVideos := getTestRTMPVideos(t)
-	return hlsVideos, rtmpVideos
+func testFixtureRootDir() string {
+	fixturePath := resolveTestFixturePath(testHLSFixtureRelativePath)
+	if fixturePath == "" {
+		return ""
+	}
+
+	return filepath.Dir(fixturePath)
+}
+
+func testRepoRootDir() string {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		return ""
+	}
+
+	return filepath.Clean(filepath.Join(filepath.Dir(currentFile), "..", ".."))
+}
+
+func requireTestFixturePathsExist(t *testing.T, relativePaths ...string) {
+	t.Helper()
+
+	for _, relativePath := range relativePaths {
+		absolutePath := resolveTestFixturePath(relativePath)
+		if absolutePath == "" {
+			t.Fatalf("unable to resolve fixture path %q", relativePath)
+		}
+		if _, err := os.Stat(absolutePath); err != nil {
+			t.Fatalf("fixture path %q not available at %s: %v", relativePath, absolutePath, err)
+		}
+	}
 }
 
 var (
@@ -295,8 +142,7 @@ func getTestConfig(t *testing.T) (*testRuntimeConfig, error) {
 
 		viper.SetConfigName("default")
 		viper.SetConfigType("json")
-		if testdataDir := findTestdataDirForTests(); testdataDir != "" {
-			rootDir := filepath.Dir(testdataDir)
+		if rootDir := testRepoRootDir(); rootDir != "" {
 			viper.AddConfigPath(filepath.Join(rootDir, "configs"))
 		}
 
@@ -333,7 +179,7 @@ func getConfiguredRTMPURL(t *testing.T) string {
 
 	testURLs := []string{
 		"rtmp://127.0.0.1:1938/live/1",
-		"rtmp://localhost:1938/live/1",
+		testRTMPAVURL,
 		"rtmp://127.0.0.1:1935/live/test",
 		"rtmp://localhost:1935/live/test",
 	}
@@ -390,7 +236,7 @@ func getConfiguredHLSLiveURL(t *testing.T) string {
 		t.Logf("HLS live config not available, falling back to local fixture: %v", err)
 	}
 
-	return getConfiguredHLSFixtureURL("testdata/stream.m3u8")
+	return getConfiguredHLSFixtureURL(testHLSFixtureRelativePath)
 }
 
 func getConfiguredHLSFixtureURL(relativePath string) string {

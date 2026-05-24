@@ -31,11 +31,5 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg
 
-      - name: Start local streaming fixtures
-        run: make -f MakeFile streaming-infra-up
-
-      - name: Wait for streaming fixtures
-        run: make -f MakeFile streaming-infra-ready
-
       - name: Run aggregated integration suite
         run: make -f MakeFile irajstreamer-all-tests

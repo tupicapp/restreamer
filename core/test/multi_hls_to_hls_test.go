@@ -25,7 +25,7 @@ import (
 // 0-5s from input1, 5-10s from input2, 10-15s from input3.
 func TestMultiHLSToHLS_WindowSwitchesMatchReference(t *testing.T) {
 	requireBinary(t, "ffmpeg")
-	sourcePlaylist := filepath.Join(findTestdataDirForTests(), "stream.m3u8")
+	sourcePlaylist := resolveTestFixturePath(testHLSFixtureRelativePath)
 	if _, err := os.Stat(sourcePlaylist); err != nil {
 		t.Fatalf("source playlist not found: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestMultiHLSToHLS_WindowSwitchesMatchReference(t *testing.T) {
 func TestMultiHLSToHLS_MixedFileAndLiveWindowSwitchesMatchReference(t *testing.T) {
 	requireBinary(t, "ffmpeg")
 
-	sourcePlaylist := filepath.Join(findTestdataDirForTests(), "stream.m3u8")
+	sourcePlaylist := resolveTestFixturePath(testHLSFixtureRelativePath)
 	if _, err := os.Stat(sourcePlaylist); err != nil {
 		t.Fatalf("source playlist not found: %v", err)
 	}
@@ -733,7 +733,7 @@ func playlistTypePtr(v playlist.MediaPlaylistType) *playlist.MediaPlaylistType {
 func setupDeterministicLiveFixtureServer(t *testing.T, duration time.Duration) (string, string, func()) {
 	t.Helper()
 
-	sourcePlaylist := filepath.Join(findTestdataDirForTests(), "stream.m3u8")
+	sourcePlaylist := resolveTestFixturePath(testHLSFixtureRelativePath)
 	if _, err := os.Stat(sourcePlaylist); err != nil {
 		t.Fatalf("source playlist not found: %v", err)
 	}
