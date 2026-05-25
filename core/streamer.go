@@ -25,7 +25,8 @@ type Streamer struct {
 	IsStarted bool
 	inputsMu  *sync.RWMutex
 	outputsMu *sync.RWMutex
-	inputs    map[string]Stream
+
+	inputs map[string]Stream
 
 	MultiCaster   MultiCaster
 	outputs       map[string]Stream
@@ -46,8 +47,6 @@ type Streamer struct {
 	inputRecordFolders map[string]shared.Folder
 	hlsConfig          HLSConfig
 	recorderConfig     RecorderConfig
-
-	watcherOnce sync.Once
 
 	events   *shared.EventEmitter
 	listener EventListener
