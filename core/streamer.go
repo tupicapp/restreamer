@@ -32,27 +32,22 @@ type Streamer struct {
 	activeInputID string
 	SwitchChan    chan string
 
-	TotalAudioFrames   int64
-	TotalVideoFrames   int64
-	DroppedAudioFrames float64
-	DroppedVideoFrames float64
-	stagedInputID      string
+	stagedInputID string
 
 	channelID string
 
 	channelLiveFolder   shared.Folder
 	channelRecordFolder shared.Folder
 	recordRootFolder    shared.Folder
-	inputHLSMu          sync.RWMutex
-	inputHLSFolders     map[string]shared.Folder
-	inputRecordMu       sync.RWMutex
-	inputRecordFolders  map[string]shared.Folder
-	hlsConfig           HLSConfig
-	recorderConfig      RecorderConfig
 
-	playlistMu    sync.Mutex
-	playlistState *ChannelPlaylistState
-	watcherOnce   sync.Once
+	inputHLSMu         sync.RWMutex
+	inputHLSFolders    map[string]shared.Folder
+	inputRecordMu      sync.RWMutex
+	inputRecordFolders map[string]shared.Folder
+	hlsConfig          HLSConfig
+	recorderConfig     RecorderConfig
+
+	watcherOnce sync.Once
 
 	events   *shared.EventEmitter
 	listener EventListener
@@ -82,72 +77,16 @@ type RecorderConfig struct {
 	PathPrefix      string
 }
 
-func WithChannelID(channelID string) StreamerOption {
-	return func(s *Streamer) {
-		s.channelID = strings.TrimSpace(channelID)
-	}
-}
-
-func WithChannelLiveFolder(folder any) StreamerOption {
-	return func(s *Streamer) {
-		adapted, err := shared.AdaptFolder(folder)
-		if err != nil {
-			logger.GetLogger().Warn("streamer: invalid channel live folder", zap.Error(err))
-			return
-		}
-		s.channelLiveFolder = adapted
-	}
-}
-
-func WithChannelRecordFolder(folder any) StreamerOption {
-	return func(s *Streamer) {
-		adapted, err := shared.AdaptFolder(folder)
-		if err != nil {
-			logger.GetLogger().Warn("streamer: invalid channel record folder", zap.Error(err))
-			return
-		}
-		s.channelRecordFolder = adapted
-	}
-}
-
-func WithRecordRootFolder(folder any) StreamerOption {
-	return func(s *Streamer) {
-		adapted, err := shared.AdaptFolder(folder)
-		if err != nil {
-			logger.GetLogger().Warn("streamer: invalid record root folder", zap.Error(err))
-			return
-		}
-		s.recordRootFolder = adapted
-	}
-}
-
-func WithHLSConfig(cfg HLSConfig) StreamerOption {
-	return func(s *Streamer) {
-		s.hlsConfig = cfg
-	}
-}
-
-func WithRecorderConfig(cfg RecorderConfig) StreamerOption {
-	return func(s *Streamer) {
-		s.recorderConfig = cfg
-	}
-}
-
 func NewStreamer(opts ...StreamerOption) *Streamer {
 	multicaster := NewMultiCaster()
 	streamer := &Streamer{
-		inputs:      make(map[string]Stream),
-		outputs:     make(map[string]Stream),
-		inputsMu:    &sync.RWMutex{},
-		outputsMu:   &sync.RWMutex{},
-		done:        make(chan struct{}),
-		SwitchChan:  make(chan string, 10),
-		MultiCaster: multicaster,
-		playlistState: &ChannelPlaylistState{
-			LastSegmentByInput: make(map[string]string),
-			Segments:           make([]HLSSegmentRef, 0, 64),
-			LastPublishedKeys:  make([]string, 0, 32),
-		},
+		inputs:             make(map[string]Stream),
+		outputs:            make(map[string]Stream),
+		inputsMu:           &sync.RWMutex{},
+		outputsMu:          &sync.RWMutex{},
+		done:               make(chan struct{}),
+		SwitchChan:         make(chan string, 10),
+		MultiCaster:        multicaster,
 		inputHLSFolders:    make(map[string]shared.Folder),
 		inputRecordFolders: make(map[string]shared.Folder),
 		events:             shared.NewEventEmitter(256),
@@ -435,8 +374,6 @@ l1:
 			}
 
 			// fmt.Println("audio frame : ", audioFrame.PTS, audioFrame.SequenceID)
-
-			s.TotalAudioFrames++
 		case <-time.After(5 * time.Millisecond):
 			continue
 		}
@@ -449,7 +386,6 @@ l1:
 				zap.Int64("sequence_id", audioFrame.SequenceID),
 				zap.Duration("pts", audioFrame.PTS),
 				zap.String("input_id", audioFrame.InputID))
-			s.DroppedAudioFrames++
 		}
 	}
 }
@@ -483,7 +419,6 @@ l1:
 
 			// fmt.Println("video frame : ", videoframe.PTS, videoframe.SequenceID, videoframe.PacketType)
 
-			s.TotalVideoFrames++
 		case <-time.After(5 * time.Millisecond):
 			continue
 		}
@@ -497,7 +432,6 @@ l1:
 				zap.Duration("pts", videoframe.PTS),
 				zap.String("input_id", videoframe.InputID),
 				zap.Bool("is_keyframe", videoframe.IsKeyFrame))
-			s.DroppedVideoFrames++
 		}
 	}
 }
@@ -513,19 +447,12 @@ func (s *Streamer) StartLife() {
 }
 
 type StreamerState struct {
-	IsStarted          bool    `json:"is_started"`
-	IsResumable        bool    `json:"is_resumable"`
-	CurrentInputID     string  `json:"current_input_id"`
-	TotalAudioFrames   int64   `json:"total_audio_frames"`
-	TotalVideoFrames   int64   `json:"total_video_frames"`
-	DroppedAudioFrames float64 `json:"dropped_audio_frames"`
-	DroppedVideoFrames float64 `json:"droppped_video_frames"`
-	AudioSuccessRate   float64 `json:"audio_success_rate"`
-	VideoSuccessRate   float64 `json:"video_success_rate"`
+	IsStarted      bool   `json:"is_started"`
+	IsResumable    bool   `json:"is_resumable"`
+	CurrentInputID string `json:"current_input_id"`
 
-	StreamInputs  []*State             `json:"inputs"`
-	StreamOutputs []*State             `json:"outputs"`
-	ChannelHLS    ChannelPlaylistState `json:"channel_hls"`
+	StreamInputs  []*State `json:"inputs"`
+	StreamOutputs []*State `json:"outputs"`
 
 	AvailableProgramHLSURLs []string `json:"available_program_hls_urls"`
 	AvailableChannelHLSURLs []string `json:"available_channel_hls_urls"`
@@ -544,9 +471,6 @@ type HLSSegmentRef struct {
 type ChannelPlaylistState struct {
 	ActiveProgramID    string            `json:"active_program_id"`
 	LastSegmentByInput map[string]string `json:"last_segment_by_input"`
-	Segments           []HLSSegmentRef   `json:"segments"`
-	MediaSequence      int               `json:"media_sequence"`
-	LastPublishedKeys  []string          `json:"last_published_keys"`
 	Playlist           string            `json:"playlist"`
 }
 
@@ -567,10 +491,6 @@ func (s *Streamer) State() StreamerState {
 	}
 	s.outputsMu.RUnlock()
 
-	s.playlistMu.Lock()
-	channelHLS := cloneChannelPlaylistState(s.playlistState)
-	s.playlistMu.Unlock()
-
 	availableProgramHLSURLs := s.availableProgramHLSURLs(streamInputs)
 	availableChannelHLSURLs := s.availableChannelHLSURLs(s.IsStarted)
 	programRecordHLSURLs := s.availableProgramRecordHLSURLs()
@@ -579,13 +499,8 @@ func (s *Streamer) State() StreamerState {
 	return StreamerState{
 		IsStarted:               s.IsStarted,
 		CurrentInputID:          activeInput,
-		TotalAudioFrames:        s.TotalAudioFrames,
-		TotalVideoFrames:        s.TotalVideoFrames,
-		DroppedAudioFrames:      s.DroppedAudioFrames,
-		DroppedVideoFrames:      s.DroppedVideoFrames,
 		StreamInputs:            streamInputs,
 		StreamOutputs:           streamOutputs,
-		ChannelHLS:              channelHLS,
 		AvailableProgramHLSURLs: availableProgramHLSURLs,
 		AvailableChannelHLSURLs: availableChannelHLSURLs,
 		ProgramRecordHLSURLs:    programRecordHLSURLs,
@@ -734,22 +649,6 @@ func latestRecorderPlaylistURL(folder shared.Folder, playlistName, publicPrefix 
 	return strings.TrimSpace(shared.PreferredURL(sessionPrefix, folder.Folder(latestSession), playlistName))
 }
 
-func cloneChannelPlaylistState(state *ChannelPlaylistState) ChannelPlaylistState {
-	if state == nil {
-		return ChannelPlaylistState{
-			LastSegmentByInput: make(map[string]string),
-			Segments:           make([]HLSSegmentRef, 0),
-			LastPublishedKeys:  make([]string, 0),
-		}
-	}
-
-	cloned := ChannelPlaylistState{
-		ActiveProgramID: state.ActiveProgramID,
-		Playlist:        state.Playlist,
-	}
-	return cloned
-}
-
 func (s *Streamer) EnsureChannelHLSOutput() error {
 	channelID := strings.TrimSpace(s.channelID)
 	if channelID == "" {
@@ -888,10 +787,6 @@ func normalizeProgramID(channelID, inputID string) string {
 
 func JoinHLSPrefix(prefix string, suffixes ...string) string {
 	return shared.JoinURLPrefix(prefix, suffixes...)
-}
-
-func (s *Streamer) ChannelHLSPlaylistState() string {
-	return s.State().ChannelHLS.Playlist
 }
 
 func (s *Streamer) SetInputHLSFolder(inputID string, folder any) error {

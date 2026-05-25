@@ -73,7 +73,6 @@ func TestAll(t *testing.T) {
 			{name: "StreamerHLSReaderToBufferingDestination", fn: TestStreamer_HLSReaderToBufferingDestination},
 			{name: "StreamerHLSReaderLiveToBufferingDestination", fn: TestStreamer_HLSReaderLiveToBufferingDestination},
 			{name: "StreamerRTMPReaderToBufferingDestination", fn: TestStreamer_RTMPReaderToBufferingDestination},
-			{name: "HLSDestinationStreamFromRTMPReaderProducesPlayableHLS", fn: TestHLSDestinationStream_FromRTMPReader_ProducesPlayableHLS},
 			{name: "StreamerSwitchBetweenInputs", fn: TestStreamer_SwitchBetweenInputs, isSequential: true},
 			{name: "StreamerHLSReaderTiming", fn: TestStreamer_HLSReaderTiming},
 			{name: "StreamerRTMPReaderTiming", fn: TestStreamer_RTMPReaderTiming},

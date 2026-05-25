@@ -1,9 +1,10 @@
 package irajstreamer
 
 import (
-	"github.com/tupicapp/restreamer/core/logger"
 	"sync"
 	"time"
+
+	"github.com/tupicapp/restreamer/core/logger"
 
 	"go.uber.org/zap"
 )
@@ -81,7 +82,6 @@ func (m *multiCaster) writeVideo() {
 							zap.Duration("pts", f.PTS),
 							zap.String("input_id", f.InputID),
 							zap.Bool("is_keyframe", f.IsKeyFrame))
-						m.streamer.DroppedVideoFrames++
 					}
 				}(output, frame)
 			}
@@ -129,7 +129,6 @@ func (m *multiCaster) writeAudio() {
 							zap.Int64("sequence_id", f.SequenceID),
 							zap.Duration("pts", f.PTS),
 							zap.String("input_id", f.InputID))
-						m.streamer.DroppedAudioFrames++
 					}
 				}(output, frame)
 			}
