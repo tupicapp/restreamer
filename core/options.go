@@ -8,6 +8,8 @@ import (
 	"go.uber.org/zap"
 )
 
+type StreamerOption func(*Streamer)
+
 func WithChannelID(channelID string) StreamerOption {
 	return func(s *Streamer) {
 		s.channelID = strings.TrimSpace(channelID)

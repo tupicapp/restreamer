@@ -23,19 +23,17 @@ import (
 
 type Streamer struct {
 	IsStarted bool
-	inputsMu  *sync.RWMutex
-	outputsMu *sync.RWMutex
 
-	inputs map[string]Stream
-
-	MultiCaster   MultiCaster
+	inputs        map[string]Stream
 	outputs       map[string]Stream
+	inputsMu      *sync.RWMutex
+	outputsMu     *sync.RWMutex
 	activeInputID string
 	SwitchChan    chan string
 
+	MultiCaster   MultiCaster
 	stagedInputID string
-
-	channelID string
+	channelID     string
 
 	channelLiveFolder   shared.Folder
 	channelRecordFolder shared.Folder
@@ -57,23 +55,6 @@ type Streamer struct {
 
 type pauseWhenInactiveCapable interface {
 	ShouldPauseWhenInactive() bool
-}
-
-type StreamerOption func(*Streamer)
-
-type HLSConfig struct {
-	PlaylistName        string
-	SegmentDuration     time.Duration
-	PlaylistSize        int
-	TargetDuration      int
-	ChannelPlaylistSize int
-	PathPrefix          string
-}
-
-type RecorderConfig struct {
-	SegmentDuration time.Duration
-	TargetDuration  int
-	PathPrefix      string
 }
 
 func NewStreamer(opts ...StreamerOption) *Streamer {
@@ -371,8 +352,6 @@ l1:
 			if !ok || audioFrame == nil {
 				continue l1
 			}
-
-			// fmt.Println("audio frame : ", audioFrame.PTS, audioFrame.SequenceID)
 		case <-time.After(5 * time.Millisecond):
 			continue
 		}
@@ -416,8 +395,6 @@ l1:
 				continue l1
 			}
 
-			// fmt.Println("video frame : ", videoframe.PTS, videoframe.SequenceID, videoframe.PacketType)
-
 		case <-time.After(5 * time.Millisecond):
 			continue
 		}
@@ -445,50 +422,18 @@ func (s *Streamer) StartLife() {
 	go s.startSwitcher()
 }
 
-type StreamerState struct {
-	IsStarted      bool   `json:"is_started"`
-	IsResumable    bool   `json:"is_resumable"`
-	CurrentInputID string `json:"current_input_id"`
-
-	StreamInputs  []*State `json:"inputs"`
-	StreamOutputs []*State `json:"outputs"`
-
-	AvailableProgramHLSURLs []string `json:"available_program_hls_urls"`
-	AvailableChannelHLSURLs []string `json:"available_channel_hls_urls"`
-	ProgramRecordHLSURLs    []string `json:"program_record_hls_urls"`
-	ChannelRecordHLSURLs    []string `json:"channel_record_hls_urls"`
-}
-
-type HLSSegmentRef struct {
-	ProgramID       string  `json:"program_id"`
-	URI             string  `json:"uri"`
-	DurationLine    string  `json:"duration_line"`
-	DurationSeconds float64 `json:"duration_seconds"`
-	Discontinuity   bool    `json:"discontinuity"`
-}
-
-type ChannelPlaylistState struct {
-	ActiveProgramID    string            `json:"active_program_id"`
-	LastSegmentByInput map[string]string `json:"last_segment_by_input"`
-	Playlist           string            `json:"playlist"`
-}
-
 // TODO : fix this
 func (s *Streamer) State() StreamerState {
-	s.inputsMu.RLock()
 	streamInputs := make([]*State, 0, len(s.inputs))
 	for _, val := range s.inputs {
 		streamInputs = append(streamInputs, val.State())
 	}
 	activeInput := s.activeInputID
-	s.inputsMu.RUnlock()
 
-	s.outputsMu.RLock()
 	streamOutputs := make([]*State, 0, len(s.outputs))
 	for _, val := range s.outputs {
 		streamOutputs = append(streamOutputs, val.State())
 	}
-	s.outputsMu.RUnlock()
 
 	availableProgramHLSURLs := s.availableProgramHLSURLs(streamInputs)
 	availableChannelHLSURLs := s.availableChannelHLSURLs(s.IsStarted)
