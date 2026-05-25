@@ -983,68 +983,6 @@ func testRTMPReaderToBufferingDestination(t *testing.T, rateControl, genPTS, pts
 	}
 }
 
-func TestHLSDestinationStream_FromRTMPReader_ProducesPlayableHLS(t *testing.T) {
-	t.Skip("config and storage packages not available in current codebase")
-	// requireBinary(t, "ffprobe")
-	// requireBinary(t, "ffmpeg")
-	//
-	// output := "recordings/hls/inputs"
-	//
-	// rtmpURL := getConfiguredRTMPURL(t)
-	// if !isRTMPURLAvailable(rtmpURL) {
-	// 	t.Skipf("RTMP stream is not reachable or not publishing: %s", rtmpURL)
-	// }
-	//
-	// channelID := fmt.Sprintf("test-channel-%d", time.Now().UnixNano())
-	// programID := "program-1"
-	// outDir := filepath.Join(output, channelID, programID)
-	// t.Cleanup(func() {
-	// 	_ = os.RemoveAll("recordings")
-	// })
-	//
-	// streamer := NewStreamer(true, true, true)
-	// streamer.StartLife()
-	// defer streamer.Close()
-	//
-	// inputID := "rtmp-reader-input"
-	// rtmpInput := streaminputs.NewRTMP(inputID, rtmpURL)
-	// hlsDestination, err := outputs.NewHLSLiveDestination("hls-file-destination", storage.NewLocal(&config.Config{
-	// 	Storage: config.Storage{RecordingsRoot: output},
-	// }).RecordingsRoot().Folder(filepath.Join(channelID, programID)))
-	// if err != nil {
-	// 	t.Fatalf("NewHLSLiveDestination failed: %v", err)
-	// }
-	//
-	// if err := streamer.UpdateStreams([]shared.Stream{rtmpInput}, []shared.Stream{hlsDestination}); err != nil {
-	// 	t.Fatalf("UpdateStreams failed: %v", err)
-	// }
-	//
-	// if !streamer.Switch(inputID) {
-	// 	t.Fatalf("failed to switch to input %q", inputID)
-	// }
-	// streamer.Start()
-	//
-	// ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	// defer cancel()
-	//
-	// if err := rtmpInput.WaitForStart(ctx); err != nil {
-	// 	t.Fatalf("RTMP reader failed to start: %v", err)
-	// }
-	// if err := hlsDestination.WaitForStart(ctx); err != nil {
-	// 	t.Fatalf("HLS destination failed to start: %v", err)
-	// }
-	//
-	// waitForHLSArtifacts(t, outDir, 15*time.Second, 2)
-	//
-	// // Close to finalize the current segment and make the generated playlist static for probing.
-	// streamer.Close()
-	//
-	// playlistPath := filepath.Join(outDir, "stream.m3u8")
-	// assertHLSPlaylistLooksValid(t, playlistPath)
-	// assertHLSPlaylistHasDiscontinuities(t, playlistPath)
-	// assertHLSSegmentTimelineIsContinuous(t, outDir)
-	// assertHLSPlayableWithFFmpeg(t, playlistPath)
-}
 
 func waitForHLSArtifacts(t *testing.T, outDir string, timeout time.Duration, minSegments int) {
 	t.Helper()

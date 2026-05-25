@@ -72,8 +72,6 @@ func (r *hlsInputLive) EventChan() chan shared.Event {
 }
 
 func (r *hlsInputLive) State() *State {
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	return &State{
 		LastIO:      r.lastIO,
 		IsResumable: r.isInitiated,

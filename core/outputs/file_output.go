@@ -3,11 +3,12 @@ package outputs
 import (
 	"context"
 	"fmt"
-	"github.com/tupicapp/restreamer/core/shared"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/tupicapp/restreamer/core/shared"
 
 	"go.uber.org/zap"
 )
@@ -21,9 +22,6 @@ type fileOutput struct {
 
 	done    chan struct{}
 	Started chan struct{}
-
-	audioMu sync.RWMutex
-	videoMu sync.RWMutex
 
 	closeOnce sync.Once
 
@@ -71,8 +69,6 @@ func (o *fileOutput) Type() string { return "writer" }
 func (o *fileOutput) GetVideoChan() chan *shared.Frame { return o.videoChan }
 func (o *fileOutput) GetAudioChan() chan *shared.Frame { return o.audioChan }
 func (o *fileOutput) GetID() string                    { return o.id }
-func (o *fileOutput) AudioLock() *sync.RWMutex         { return &o.audioMu }
-func (o *fileOutput) VideoLock() *sync.RWMutex         { return &o.videoMu }
 
 func (o *fileOutput) IsRestartable() bool           { return true }
 func (o *fileOutput) IsKeyFrame(*shared.Frame) bool { return true }
@@ -283,7 +279,6 @@ func (o *fileOutput) State() *shared.State {
 	videoWrite, audioWrite := o.GetStateTimes()
 	return &shared.State{
 		IsStarted:          o.isStarted,
-		IsResumable:        o.IsRestartable(),
 		StreamID:           o.id,
 		Url:                o.url,
 		Type:               o.Type(),

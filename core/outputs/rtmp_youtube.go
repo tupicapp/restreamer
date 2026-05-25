@@ -3,12 +3,13 @@ package outputs
 import (
 	"context"
 	"errors"
-	"github.com/tupicapp/restreamer/core/shared"
 	"io"
 	"os"
 	"os/exec"
 	"sync"
 	"time"
+
+	"github.com/tupicapp/restreamer/core/shared"
 
 	"go.uber.org/zap"
 )
@@ -65,8 +66,6 @@ type RtmpYouTubeOutput struct {
 	closeOnce sync.Once
 	Started   chan struct{}
 	done      chan struct{}
-	audioMu   sync.RWMutex
-	videoMu   sync.RWMutex
 	events    *shared.EventEmitter
 }
 
@@ -178,11 +177,9 @@ func (o *RtmpYouTubeOutput) GetAudioChan() chan *shared.Frame {
 	}
 }
 
-func (o *RtmpYouTubeOutput) GetID() string            { return o.id }
-func (o *RtmpYouTubeOutput) Type() string             { return "writer" }
-func (o *RtmpYouTubeOutput) AudioLock() *sync.RWMutex { return &o.audioMu }
-func (o *RtmpYouTubeOutput) VideoLock() *sync.RWMutex { return &o.videoMu }
-func (o *RtmpYouTubeOutput) IsRestartable() bool      { return true }
+func (o *RtmpYouTubeOutput) GetID() string       { return o.id }
+func (o *RtmpYouTubeOutput) Type() string        { return "writer" }
+func (o *RtmpYouTubeOutput) IsRestartable() bool { return true }
 
 func (o *RtmpYouTubeOutput) IsKeyFrame(frame *shared.Frame) bool {
 	if frame == nil || len(frame.Payload) == 0 {
@@ -227,8 +224,6 @@ func (o *RtmpYouTubeOutput) Clone() (shared.Stream, error) {
 		audioChan:     make(chan *shared.Frame, DefaultChannelBufferSize),
 		videoChan:     make(chan *shared.Frame, DefaultChannelBufferSize),
 		Started:       make(chan struct{}),
-		audioMu:       sync.RWMutex{},
-		videoMu:       sync.RWMutex{},
 		events:        shared.NewEventEmitter(128),
 	}
 
@@ -344,12 +339,8 @@ func (o *RtmpYouTubeOutput) Close() {
 }
 
 func (o *RtmpYouTubeOutput) State() *shared.State {
-	o.streamsMu.RLock()
-	defer o.streamsMu.RUnlock()
-
 	return &shared.State{
 		IsStarted:          o.IsStarted,
-		IsResumable:        o.IsRestartable(),
 		StreamID:           o.id,
 		Url:                o.url,
 		Type:               o.Type(),

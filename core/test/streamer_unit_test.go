@@ -79,8 +79,6 @@ func (m *mockStream) Close() {
 }
 
 func (m *mockStream) State() *State {
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	return &State{
 		IsStarted: m.isStarted,
 		LastIO:    m.lastIO,

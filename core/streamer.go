@@ -571,36 +571,13 @@ func (s *Streamer) State() StreamerState {
 	channelHLS := cloneChannelPlaylistState(s.playlistState)
 	s.playlistMu.Unlock()
 
-	isStarted := s.IsStarted
-	isResumable := true
-	for _, val := range streamOutputs {
-		isStarted = val.IsStarted && isStarted
-		isResumable = val.IsResumable && isResumable
-	}
-
-	// Calculate success rates, avoiding division by zero
-	// var audioSuccessRate float64
-	// if s.TotalAudioFrames > 0 {
-	// 	audioSuccessRate = ((float64(s.TotalAudioFrames) - s.DroppedAudioFrames) / float64(s.TotalAudioFrames)) * 100
-	// } else {
-	// 	audioSuccessRate = 100.0 // No frames yet, assume 100% success
-	// }
-
-	// var videoSuccessRate float64
-	// if s.TotalVideoFrames > 0 {
-	// 	videoSuccessRate = ((float64(s.TotalVideoFrames) - s.DroppedVideoFrames) / float64(s.TotalVideoFrames)) * 100
-	// } else {
-	// 	videoSuccessRate = 100.0 // No frames yet, assume 100% success
-	// }
-
 	availableProgramHLSURLs := s.availableProgramHLSURLs(streamInputs)
-	availableChannelHLSURLs := s.availableChannelHLSURLs(isStarted)
+	availableChannelHLSURLs := s.availableChannelHLSURLs(s.IsStarted)
 	programRecordHLSURLs := s.availableProgramRecordHLSURLs()
 	channelRecordHLSURLs := s.availableChannelRecordHLSURLs()
 
 	return StreamerState{
-		IsStarted:               isStarted,
-		IsResumable:             isResumable,
+		IsStarted:               s.IsStarted,
 		CurrentInputID:          activeInput,
 		TotalAudioFrames:        s.TotalAudioFrames,
 		TotalVideoFrames:        s.TotalVideoFrames,
@@ -767,15 +744,8 @@ func cloneChannelPlaylistState(state *ChannelPlaylistState) ChannelPlaylistState
 	}
 
 	cloned := ChannelPlaylistState{
-		ActiveProgramID:    state.ActiveProgramID,
-		LastSegmentByInput: make(map[string]string, len(state.LastSegmentByInput)),
-		Segments:           append([]HLSSegmentRef(nil), state.Segments...),
-		MediaSequence:      state.MediaSequence,
-		LastPublishedKeys:  append([]string(nil), state.LastPublishedKeys...),
-		Playlist:           state.Playlist,
-	}
-	for k, v := range state.LastSegmentByInput {
-		cloned.LastSegmentByInput[k] = v
+		ActiveProgramID: state.ActiveProgramID,
+		Playlist:        state.Playlist,
 	}
 	return cloned
 }
@@ -937,8 +907,8 @@ func (s *Streamer) SetInputHLSFolder(inputID string, folder any) error {
 		return errors.New("input hls folder is required")
 	}
 	s.inputHLSMu.Lock()
-	defer s.inputHLSMu.Unlock()
 	s.inputHLSFolders[inputID] = adapted
+	s.inputHLSMu.Unlock()
 	return nil
 }
 
@@ -955,8 +925,8 @@ func (s *Streamer) SetInputRecordFolder(inputID string, folder any) error {
 		return errors.New("input record folder is required")
 	}
 	s.inputRecordMu.Lock()
-	defer s.inputRecordMu.Unlock()
 	s.inputRecordFolders[inputID] = adapted
+	s.inputRecordMu.Unlock()
 	return nil
 }
 
@@ -1204,47 +1174,6 @@ func (s *Streamer) hlsPlaylistName() string {
 	return name
 }
 
-func (s *Streamer) channelPlaylistSize() int {
-	size := s.hlsConfig.ChannelPlaylistSize
-	if size <= 0 {
-		return 2
-	}
-	return size
-}
-
-func segmentRefKey(seg HLSSegmentRef) string {
-	return seg.ProgramID + "|" + strings.TrimSpace(seg.URI)
-}
-
-func countRemovedFromHeadByOverlap(prev, next []string) int {
-	if len(prev) == 0 {
-		return 0
-	}
-
-	maxOverlap := 0
-	maxPossible := len(prev)
-	if len(next) < maxPossible {
-		maxPossible = len(next)
-	}
-
-	for k := maxPossible; k >= 0; k-- {
-		match := true
-		startPrev := len(prev) - k
-		for i := 0; i < k; i++ {
-			if prev[startPrev+i] != next[i] {
-				match = false
-				break
-			}
-		}
-		if match {
-			maxOverlap = k
-			break
-		}
-	}
-
-	return len(prev) - maxOverlap
-}
-
 func sanitizeHLSRelativePath(rel string) (string, error) {
 	rel = strings.TrimSpace(strings.TrimPrefix(rel, "/"))
 	if rel == "" {
@@ -1260,6 +1189,7 @@ func sanitizeHLSRelativePath(rel string) (string, error) {
 func (s *Streamer) Close() {
 	s.closeOnce.Do(func() {
 		close(s.done)
+		s.IsStarted = false
 
 		if s.MultiCaster != nil {
 			s.MultiCaster.Close()
@@ -1515,5 +1445,8 @@ func (s *Streamer) removeInputLocked(streamID string, expected Stream, matchExpe
 	s.inputHLSMu.Lock()
 	delete(s.inputHLSFolders, streamID)
 	s.inputHLSMu.Unlock()
+	s.inputRecordMu.Lock()
+	delete(s.inputRecordFolders, streamID)
+	s.inputRecordMu.Unlock()
 	return true
 }

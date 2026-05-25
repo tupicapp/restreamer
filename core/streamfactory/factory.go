@@ -34,7 +34,8 @@ func NewInput(id, streamURL string) (core.Stream, error) {
 		// OptionWithRealTime applies only to the VOD path (hlsInput).
 		return inputs.NewHLSAuto(id, streamURL, inputs.OptionWithRealTime(true))
 	default:
-		return inputs.NewRTMP(id, streamURL), nil
+		return inputs.NewCompatibleInput(inputs.NewRTMP(id, streamURL),
+			inputs.WithCompatRuntimeDetection(false)), nil
 	}
 }
 

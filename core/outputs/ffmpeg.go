@@ -4,12 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/tupicapp/restreamer/core/shared"
 	"io"
 	"os"
 	"os/exec"
 	"sync"
 	"time"
+
+	"github.com/tupicapp/restreamer/core/shared"
 
 	"go.uber.org/zap"
 )
@@ -553,8 +554,6 @@ func (o *FFmpegOutput) State() *shared.State {
 
 	return &shared.State{
 		IsStarted:          o.IsStarted,
-		IsResumable:        isFFmpegAlive(o.cmd),
-		RunnerDetails:      o.cmd.String() + "\n" + o.cmd.ProcessState.String(),
 		LastIO:             lastRead,
 		StreamID:           o.id,
 		Type:               string(o.streamType),

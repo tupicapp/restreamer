@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	filters "github.com/tupicapp/restreamer/core/filters"
-	"github.com/tupicapp/restreamer/core/shared"
 	"net/url"
 	"sync"
 	"time"
+
+	filters "github.com/tupicapp/restreamer/core/filters"
+	"github.com/tupicapp/restreamer/core/shared"
 
 	"github.com/bluenviron/gortmplib"
 	"github.com/bluenviron/gortmplib/pkg/codecs"

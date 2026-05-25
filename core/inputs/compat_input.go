@@ -217,7 +217,7 @@ func (c *compatInputStream) EventChan() chan Event {
 }
 
 func (c *compatInputStream) ShouldPauseWhenInactive() bool {
-	return true
+	return false
 }
 
 func (c *compatInputStream) forwardVideo() {

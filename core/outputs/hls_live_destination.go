@@ -289,7 +289,6 @@ func (o *hlsLive) State() *shared.State {
 
 	return &shared.State{
 		IsStarted:          o.isStarted,
-		IsResumable:        o.IsRestartable(),
 		LastIO:             lastIO,
 		StreamID:           o.id,
 		Url:                o.url,

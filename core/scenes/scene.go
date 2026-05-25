@@ -202,9 +202,7 @@ func (s *Scene) EventChan() chan shared.Event {
 }
 
 func (s *Scene) State() *shared.State {
-	s.lastIOMu.RLock()
 	lastIO := s.lastIO
-	s.lastIOMu.RUnlock()
 
 	return &shared.State{
 		IsStarted:          !lastIO.IsZero(),

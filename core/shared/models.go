@@ -181,8 +181,6 @@ type State struct {
 	DroppedVideoFrames float64   `json:"dropped_video_frames"`
 	TotalVideoFrames   int64     `json:"total_video_frames"`
 	TotalAudioFrames   int64     `json:"total_audio_frames"`
-	LastVideoPacket    *Frame    `json:"last_video_packet"`
-	LastAudioPacket    *Frame    `json:"last_audio_packet"`
 }
 
 const (

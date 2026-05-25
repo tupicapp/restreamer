@@ -3,9 +3,10 @@ package outputs
 import (
 	"context"
 	"fmt"
-	"github.com/tupicapp/restreamer/core/shared"
 	"sync"
 	"time"
+
+	"github.com/tupicapp/restreamer/core/shared"
 )
 
 // buffering is a Stream implementation that buffers all frames it receives
@@ -18,9 +19,6 @@ type buffering struct {
 	videoFrames []*shared.Frame
 	audioFrames []*shared.Frame
 	bufferMu    sync.Mutex
-
-	audioMu sync.RWMutex
-	videoMu sync.RWMutex
 
 	IsStarted   bool
 	IsInitiated bool
@@ -50,17 +48,10 @@ func (b *buffering) GetVideoChan() chan *shared.Frame { return b.videoChan }
 func (b *buffering) GetAudioChan() chan *shared.Frame { return b.audioChan }
 func (b *buffering) GetID() string                    { return b.id }
 func (b *buffering) Type() string                     { return "buffering_destination" }
-func (b *buffering) AudioLock() *sync.RWMutex         { return &b.audioMu }
-func (b *buffering) VideoLock() *sync.RWMutex         { return &b.videoMu }
 func (b *buffering) IsRestartable() bool              { return false }
 func (b *buffering) RestartInterval() time.Duration   { return 100 * time.Second }
 
 func (b *buffering) State() *shared.State {
-	b.videoMu.RLock()
-	b.audioMu.RLock()
-	defer b.videoMu.RUnlock()
-	defer b.audioMu.RUnlock()
-
 	return &shared.State{
 		LastIO:             b.LastIO,
 		IsStarted:          b.IsStarted,

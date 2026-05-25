@@ -550,8 +550,6 @@ func (s *RTMPInput) RestartInterval() time.Duration {
 func (s *RTMPInput) State() *State {
 	return &State{
 		LastIO:             s.LastIO,
-		LastVideoPacket:    s.lastVideoPacket,
-		LastAudioPacket:    s.lastAudioPacket,
 		IsStarted:          s.IsStarted,
 		StreamID:           s.id,
 		Url:                s.url,

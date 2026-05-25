@@ -480,7 +480,6 @@ func (is *FFmpegInput) State() *State {
 
 	return &State{
 		RunnerDetails:      is.command.String() + "\n" + is.command.ProcessState.String(),
-		IsResumable:        isFFmpegAlive(is.command),
 		LastIO:             lastRead,
 		StreamID:           is.streamID,
 		Type:               string(is.streamType),
