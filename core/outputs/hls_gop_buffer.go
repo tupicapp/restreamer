@@ -429,7 +429,11 @@ func (r *hlsTimelineRebaser) Process(in *shared.Frame) []*shared.Frame {
 			r.lastVideoKeySeq = 0
 
 			out := make([]*shared.Frame, 0, 1+len(r.pendingAudio))
-			out = append(out, r.rebaseOneLocked(f))
+			keyframe := r.rebaseOneLocked(f)
+			if keyframe != nil && keyframe.InputID != "" && r.lastOutPTS > 0 {
+				keyframe.Discontinuity = true
+			}
+			out = append(out, keyframe)
 			for _, af := range r.pendingAudio {
 				audioOrigPTS := af.PTS
 				if audioOrigPTS == 0 && af.DTS != 0 {

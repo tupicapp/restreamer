@@ -161,6 +161,7 @@ type Frame struct {
 	Timestamp  time.Time
 	InputID    string
 	IsKeyFrame bool
+	Discontinuity bool
 	SequenceID int64
 	GOPID      int64
 	IsFile     bool

@@ -95,6 +95,9 @@ func TestHLSGOPBuffer_SwitchRequiresDecodableKeyframeAndHoldsAudio(t *testing.T)
 		if f.InputID == "B" && f.Codec == "h264" && f.IsKeyFrame {
 			foundBKey = true
 			bKeyPTS = f.PTS
+			if !f.Discontinuity {
+				t.Fatal("expected committed switch keyframe to be marked as discontinuity")
+			}
 			break
 		}
 	}

@@ -1185,6 +1185,7 @@ func TestHLSDestination_InputSwitch_RotatesAtNextKeyframeAndDropsUntilThen(t *te
 		InputID:    "input-b",
 		Codec:      "h264",
 		IsKeyFrame: true,
+		Discontinuity: true,
 		PTS:        1500 * time.Millisecond,
 		DTS:        1500 * time.Millisecond,
 		Payload:    [][]byte{{0x67, 0x4d, 0x00, 0x1f}, {0x68, 0xee, 0x3c, 0x80}, {0x65, 0x88, 0x84}},
@@ -1192,6 +1193,9 @@ func TestHLSDestination_InputSwitch_RotatesAtNextKeyframeAndDropsUntilThen(t *te
 
 	if dest.currentSegmentInputID != "input-b" {
 		t.Fatalf("expected active segment input to switch to input-b, got %q", dest.currentSegmentInputID)
+	}
+	if _, err := os.Stat(filepath.Join(outDir, "seg_000000.ts")); err != nil {
+		t.Fatalf("expected previous segment to be closed and written on discontinuity, got err=%v", err)
 	}
 
 	if err := dest.closeCurrentSegmentLocked(false); err != nil {

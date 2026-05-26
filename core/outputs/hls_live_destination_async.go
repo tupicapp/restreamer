@@ -324,7 +324,7 @@ func (o *hlsLiveAsync) started() bool {
 
 func (o *hlsLiveAsync) handleVideoFrame(frame *shared.Frame) {
 	o.cacheH264ParameterSets(frame.Payload)
-	if shouldDrop, err := o.handleVideoSwitchBoundaryLocked(frame); err != nil {
+	if shouldDrop, err := o.handleVideoDiscontinuityLocked(frame); err != nil {
 		o.stateMu.Lock()
 		o.DroppedVideoFrames++
 		o.stateMu.Unlock()
@@ -761,7 +761,7 @@ func (o *hlsLiveAsync) computeTargetDuration() int {
 	return target
 }
 
-func (o *hlsLiveAsync) handleVideoSwitchBoundaryLocked(frame *shared.Frame) (bool, error) {
+func (o *hlsLiveAsync) handleVideoDiscontinuityLocked(frame *shared.Frame) (bool, error) {
 	if frame == nil {
 		return false, nil
 	}
@@ -777,18 +777,8 @@ func (o *hlsLiveAsync) handleVideoSwitchBoundaryLocked(frame *shared.Frame) (boo
 		return false, nil
 	}
 
-	if o.currentSegmentInputID == inputID {
-		return false, nil
-	}
-
-	if !frame.IsKeyFrame {
-		return true, nil
-	}
-
-	videoPayload := o.ensureSPSPPSOnKeyFrame(frame)
-	hasSPS, hasPPS := h264SPSPPSPresent(videoPayload)
-	if !hasSPS || !hasPPS {
-		return true, nil
+	if !frame.Discontinuity {
+		return inputID != o.currentSegmentInputID, nil
 	}
 
 	o.currentSegmentInputID = inputID
