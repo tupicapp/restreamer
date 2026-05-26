@@ -577,8 +577,10 @@ func (f *flexString) UnmarshalJSON(b []byte) error {
 }
 
 type StreamInfo struct {
-	CodecName string `json:"codec_name"`
-	CodecType string `json:"codec_type"`
+	CodecName  string `json:"codec_name"`
+	CodecType  string `json:"codec_type"`
+	SampleRate string `json:"sample_rate"`
+	Channels   int    `json:"channels"`
 
 	Width  int `json:"width"`
 	Height int `json:"height"`

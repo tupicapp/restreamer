@@ -36,7 +36,7 @@ func TestHLSFileDestination_UsesGOPBufferAndGatesUntilKeyframe(t *testing.T) {
 		t.Fatalf("NewHLSLiveDestination failed: %v", err)
 	}
 
-	dest, ok := stream.(*hlsLive)
+	dest, ok := stream.(*hlsLiveAsync)
 	if !ok {
 		t.Fatalf("unexpected stream type %T", stream)
 	}
@@ -71,7 +71,8 @@ func TestHLSFileDestination_UsesGOPBufferAndGatesUntilKeyframe(t *testing.T) {
 		t.Fatalf("playlist should not exist before first keyframe, statErr=%v", statErr)
 	}
 
-	// First keyframe should pass GOPBuffer and initialize first segment + playlist.
+	// First keyframe should pass GOPBuffer and initialize the first segment, but
+	// the playlist should remain unpublished until the first segment is finalized.
 	dest.GetVideoChan() <- &shared.Frame{
 		InputID:    "input-a",
 		Codec:      "h264",
@@ -82,19 +83,26 @@ func TestHLSFileDestination_UsesGOPBufferAndGatesUntilKeyframe(t *testing.T) {
 		SequenceID: 2,
 	}
 
+	time.Sleep(150 * time.Millisecond)
+	if _, statErr := os.Stat(filepath.Join(outDir, "stream.m3u8")); !os.IsNotExist(statErr) {
+		t.Fatalf("playlist should not be published before first segment finalization, statErr=%v", statErr)
+	}
+
+	dest.Close()
+
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		if _, statErr := os.Stat(filepath.Join(outDir, "stream.m3u8")); statErr == nil {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("playlist was not created after first keyframe")
+			t.Fatalf("playlist was not created after segment finalization")
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 }
 
-func TestHLSFileDestination_SwitchInputIDTimestampReset_DoesNotDropByDestination(t *testing.T) {
+func TestHLSFileDestination_TimestampReset_RemainsProcessable(t *testing.T) {
 	outDir := filepath.Join(t.TempDir(), "hls")
 	outFolder := storage.NewLocal(&config.Config{
 		Storage: config.Storage{RecordingsRoot: filepath.Dir(outDir)},
@@ -105,7 +113,7 @@ func TestHLSFileDestination_SwitchInputIDTimestampReset_DoesNotDropByDestination
 		t.Fatalf("NewHLSLiveDestination failed: %v", err)
 	}
 
-	dest, ok := stream.(*hlsLive)
+	dest, ok := stream.(*hlsLiveAsync)
 	if !ok {
 		t.Fatalf("unexpected stream type %T", stream)
 	}
@@ -131,7 +139,6 @@ func TestHLSFileDestination_SwitchInputIDTimestampReset_DoesNotDropByDestination
 		DTS:        2033 * time.Millisecond,
 		SequenceID: 2,
 	}
-	// Simulate switch to a new input whose timeline restarts near zero.
 	videoBNonKey := &shared.Frame{
 		InputID:    "input-b",
 		Codec:      "h264",
@@ -164,16 +171,24 @@ func TestHLSFileDestination_SwitchInputIDTimestampReset_DoesNotDropByDestination
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	if dest.TotalVideoFrames < 3 {
-		t.Fatalf("expected destination to process switched video frames, got total=%d", dest.TotalVideoFrames)
-	}
-	if dest.DroppedVideoFrames != 0 {
-		t.Fatalf("expected no destination-side drops on input switch timestamp reset, got drops=%v", dest.DroppedVideoFrames)
+	if dest.TotalVideoFrames < 2 {
+		t.Fatalf("expected destination to process timestamp-reset video flow, got total=%d", dest.TotalVideoFrames)
 	}
 
-	if _, statErr := os.Stat(filepath.Join(outDir, "stream.m3u8")); statErr != nil {
-		t.Fatalf("expected playlist after switched input frames, got err=%v", statErr)
+	dest.Close()
+
+	playlistPath := filepath.Join(outDir, "stream.m3u8")
+	deadline = time.Now().Add(2 * time.Second)
+	for {
+		if _, statErr := os.Stat(playlistPath); statErr == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected playlist after closing timestamp-reset flow")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
+	assertHLSPlaylistLooksValid(t, playlistPath)
 }
 
 func TestHLSFileDestination_DoesNotStartSegmentFromAudioOnly(t *testing.T) {
@@ -187,7 +202,7 @@ func TestHLSFileDestination_DoesNotStartSegmentFromAudioOnly(t *testing.T) {
 		t.Fatalf("NewHLSLiveDestination failed: %v", err)
 	}
 
-	dest, ok := stream.(*hlsLive)
+	dest, ok := stream.(*hlsLiveAsync)
 	if !ok {
 		t.Fatalf("unexpected stream type %T", stream)
 	}
@@ -220,13 +235,20 @@ func TestHLSFileDestination_DoesNotStartSegmentFromAudioOnly(t *testing.T) {
 		SequenceID: 2,
 	}
 
+	time.Sleep(150 * time.Millisecond)
+	if _, statErr := os.Stat(filepath.Join(outDir, "stream.m3u8")); !os.IsNotExist(statErr) {
+		t.Fatalf("playlist should not be published before first segment finalization, statErr=%v", statErr)
+	}
+
+	dest.Close()
+
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		if _, statErr := os.Stat(filepath.Join(outDir, "stream.m3u8")); statErr == nil {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("playlist was not created after first video keyframe")
+			t.Fatalf("playlist was not created after finalizing first video segment")
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
@@ -425,7 +447,7 @@ func TestHLSDestination_RecordMode_KeepsAllEntriesInPlaylist(t *testing.T) {
 	}
 
 	// Record mode (isLive=false): entries should never be trimmed regardless of playlistSize.
-	dest := &hlsLive{
+	dest := &hlsLiveAsync{
 		id:              "hls-record-test",
 		outputFolder:    outFolder,
 		segmentDuration: time.Second,
@@ -459,7 +481,7 @@ func TestHLSDestination_LiveMode_TrimsEntriesAtPlaylistSize(t *testing.T) {
 		t.Fatalf("AdaptFolder failed: %v", err)
 	}
 
-	dest := &hlsLive{
+	dest := &hlsLiveAsync{
 		id:              "hls-live-trim-test",
 		outputFolder:    outFolder,
 		segmentDuration: time.Second,
@@ -496,7 +518,7 @@ func TestHLSDestination_LiveMode_MediaSequenceAdvancesWithWindow(t *testing.T) {
 		t.Fatalf("AdaptFolder failed: %v", err)
 	}
 
-	dest := &hlsLive{
+	dest := &hlsLiveAsync{
 		id:              "hls-live-seq-test",
 		outputFolder:    outFolder,
 		segmentDuration: time.Second,
@@ -529,6 +551,57 @@ func TestHLSDestination_LiveMode_MediaSequenceAdvancesWithWindow(t *testing.T) {
 	}
 }
 
+func TestHLSDestination_LiveMode_DiscontinuitySequenceAdvancesWhenWindowDropsMarkers(t *testing.T) {
+	outDir := t.TempDir()
+	outFolderRaw := storage.NewLocal(&config.Config{
+		Storage: config.Storage{RecordingsRoot: outDir},
+	}).RecordingsRoot()
+	outFolder, err := shared.AdaptFolder(outFolderRaw)
+	if err != nil {
+		t.Fatalf("AdaptFolder failed: %v", err)
+	}
+
+	dest := &hlsLiveAsync{
+		id:              "hls-live-disco-seq-test",
+		outputFolder:    outFolder,
+		segmentDuration: time.Second,
+		playlistSize:    2,
+		targetDuration:  1,
+		isLive:          true,
+		events:          shared.NewEventEmitter(32),
+	}
+
+	dest.entries = []hlsSegmentEntry{
+		{Seq: 0, FileName: "seg_000000.ts", Duration: 1.0, Discontinuity: true},
+		{Seq: 1, FileName: "seg_000001.ts", Duration: 1.0},
+	}
+	dest.discontinuitySequence = 3
+	dest.segmentIndex = 2
+	dest.forceDiscontinuityNext = true
+	if err := dest.openSegmentLocked(2 * time.Second); err != nil {
+		t.Fatalf("openSegmentLocked failed: %v", err)
+	}
+	dest.currentSegmentHasTime = true
+	dest.currentSegmentStart90k = 0
+	dest.currentSegmentLast90k = 90000
+
+	if err := dest.closeCurrentSegmentLocked(false); err != nil {
+		t.Fatalf("closeCurrentSegmentLocked failed: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(outDir, "stream.m3u8"))
+	if err != nil {
+		t.Fatalf("read playlist: %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "#EXT-X-MEDIA-SEQUENCE:1") {
+		t.Fatalf("expected media sequence to advance to 1, got:\n%s", text)
+	}
+	if !strings.Contains(text, "#EXT-X-DISCONTINUITY-SEQUENCE:4") {
+		t.Fatalf("expected discontinuity sequence to advance to 4 after evicting one discontinuity, got:\n%s", text)
+	}
+}
+
 func TestHLSDestination_RecordMode_PlaylistEndsWithEndList(t *testing.T) {
 	outDir := t.TempDir()
 	outFolderRaw := storage.NewLocal(&config.Config{
@@ -539,7 +612,7 @@ func TestHLSDestination_RecordMode_PlaylistEndsWithEndList(t *testing.T) {
 		t.Fatalf("AdaptFolder failed: %v", err)
 	}
 
-	dest := &hlsLive{
+	dest := &hlsLiveAsync{
 		id:              "hls-record-endlist-test",
 		outputFolder:    outFolder,
 		segmentDuration: time.Second,
@@ -575,7 +648,7 @@ func TestHLSDestination_WithHLSLiveMode_SetsField(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewHLSLiveDestination failed: %v", err)
 	}
-	dest := stream.(*hlsLive)
+	dest := stream.(*hlsLiveAsync)
 	defer dest.Close()
 
 	if !dest.isLive {
@@ -596,7 +669,7 @@ func TestHLSDestination_WithoutLiveMode_DefaultsToRecord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewHLSLiveDestination failed: %v", err)
 	}
-	dest := stream.(*hlsLive)
+	dest := stream.(*hlsLiveAsync)
 	defer dest.Close()
 
 	if dest.isLive {
@@ -617,7 +690,7 @@ func TestHLSDestination_SegmentAndPlaylistOptionsApplied(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewHLSLiveDestination failed: %v", err)
 	}
-	dest := stream.(*hlsLive)
+	dest := stream.(*hlsLiveAsync)
 	defer dest.Close()
 
 	if dest.segmentDuration != 4*time.Second {
@@ -649,7 +722,10 @@ func TestHLSDestination_EnsureSPSPPSOnKeyFrame_InjectsWhenMissing(t *testing.T) 
 	pps := []byte{0x68, 0xce, 0x38, 0x80}
 	idr := []byte{0x65, 0x88, 0x84}
 
-	dest := &hlsLive{cachedSPS: sps, cachedPPS: pps}
+	dest := &hlsLiveAsync{
+		cachedSPS: sps,
+		cachedPPS: pps,
+	}
 	frame := &shared.Frame{IsKeyFrame: true, Payload: [][]byte{idr}}
 	out := dest.ensureSPSPPSOnKeyFrame(frame)
 
@@ -667,7 +743,10 @@ func TestHLSDestination_EnsureSPSPPSOnKeyFrame_NoOpForNonKeyFrame(t *testing.T) 
 	pps := []byte{0x68, 0xce, 0x38, 0x80}
 	inter := []byte{0x41, 0x9a, 0x22}
 
-	dest := &hlsLive{cachedSPS: sps, cachedPPS: pps}
+	dest := &hlsLiveAsync{
+		cachedSPS: sps,
+		cachedPPS: pps,
+	}
 	frame := &shared.Frame{IsKeyFrame: false, Payload: [][]byte{inter}}
 	out := dest.ensureSPSPPSOnKeyFrame(frame)
 
@@ -679,7 +758,7 @@ func TestHLSDestination_EnsureSPSPPSOnKeyFrame_NoOpForNonKeyFrame(t *testing.T) 
 func TestHLSDestination_CacheH264ParameterSets(t *testing.T) {
 	sps := []byte{0x67, 0x42, 0x00, 0x1f}
 	pps := []byte{0x68, 0xce, 0x38, 0x80}
-	dest := &hlsLive{}
+	dest := &hlsLiveAsync{}
 
 	dest.cacheH264ParameterSets([][]byte{sps, pps})
 
@@ -688,6 +767,54 @@ func TestHLSDestination_CacheH264ParameterSets(t *testing.T) {
 	}
 	if string(dest.cachedPPS) != string(pps) {
 		t.Fatalf("expected cachedPPS to be updated")
+	}
+}
+
+func TestHLSDestination_EnsureSPSPPSOnKeyFrame_UsesLatestCache(t *testing.T) {
+	dest := &hlsLiveAsync{
+		cachedSPS: []byte{0x67, 0x4d, 0x00, 0x1f},
+		cachedPPS: []byte{0x68, 0xee, 0x3c, 0x80},
+	}
+
+	frame := &shared.Frame{
+		IsKeyFrame: true,
+		Payload:    [][]byte{{0x65, 0x88, 0x84}},
+	}
+	out := dest.ensureSPSPPSOnKeyFrame(frame)
+	if len(out) < 3 {
+		t.Fatalf("expected SPS/PPS injection from latest cache, got %d nalus", len(out))
+	}
+	if string(out[0]) != string(dest.cachedSPS) {
+		t.Fatalf("expected cached SPS to be injected, got %v", out[0])
+	}
+	if string(out[1]) != string(dest.cachedPPS) {
+		t.Fatalf("expected cached PPS to be injected, got %v", out[1])
+	}
+}
+
+func TestHLSDestination_EnsureSPSPPSOnKeyFrame_NormalizesKeyframePrefixOrder(t *testing.T) {
+	sps := []byte{0x67, 0x42, 0x00, 0x1f}
+	pps := []byte{0x68, 0xce, 0x38, 0x80}
+	idr := []byte{0x65, 0x88, 0x84}
+
+	dest := &hlsLiveAsync{}
+	frame := &shared.Frame{
+		IsKeyFrame: true,
+		Payload:    [][]byte{idr, pps, sps},
+	}
+
+	out := dest.ensureSPSPPSOnKeyFrame(frame)
+	if len(out) != 3 {
+		t.Fatalf("expected 3 nalus after keyframe normalization, got %d", len(out))
+	}
+	if string(out[0]) != string(sps) {
+		t.Fatalf("expected SPS first, got %v", out[0])
+	}
+	if string(out[1]) != string(pps) {
+		t.Fatalf("expected PPS second, got %v", out[1])
+	}
+	if string(out[2]) != string(idr) {
+		t.Fatalf("expected IDR after SPS/PPS, got %v", out[2])
 	}
 }
 
@@ -724,7 +851,7 @@ func TestHLSDestination_CloseWritesEndList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewHLSLiveDestination failed: %v", err)
 	}
-	dest := stream.(*hlsLive)
+	dest := stream.(*hlsLiveAsync)
 
 	dest.Start()
 
@@ -757,19 +884,31 @@ func TestHLSDestination_CloseWritesEndList(t *testing.T) {
 }
 
 func TestHLSFileDestination_NormalizeAudioTimestamp90k_StrictlyMonotonic(t *testing.T) {
-	dest := &hlsLive{}
+	dest := &hlsLiveAsync{}
 
-	first := dest.normalizeAudioTimestamp90k(89655)
-	second := dest.normalizeAudioTimestamp90k(89655)
-	third := dest.normalizeAudioTimestamp90k(89650)
+	first := dest.normalizeAudioTimestamp90k(89655, 44100)
+	second := dest.normalizeAudioTimestamp90k(89655, 44100)
+	third := dest.normalizeAudioTimestamp90k(89650, 44100)
 
 	if !(first < second && second < third) {
 		t.Fatalf("expected strictly increasing audio PTS, got %d, %d, %d", first, second, third)
 	}
 }
 
+func TestHLSFileDestination_NormalizeAudioTimestamp90k_UsesAACFrameCadence(t *testing.T) {
+	dest := &hlsLiveAsync{}
+
+	first := dest.normalizeAudioTimestamp90k(0, 44100)
+	second := dest.normalizeAudioTimestamp90k(0, 44100)
+	third := dest.normalizeAudioTimestamp90k(0, 44100)
+
+	if second-first < 2089 || third-second < 2089 {
+		t.Fatalf("expected AAC cadence-sized steps, got deltas %d and %d", second-first, third-second)
+	}
+}
+
 func TestHLSFileDestination_NormalizeVideoTimestamps90k_StrictlyMonotonic(t *testing.T) {
-	dest := &hlsLive{}
+	dest := &hlsLiveAsync{}
 
 	pts1, dts1 := dest.normalizeVideoTimestamps90k(1000, 1000)
 	pts2, dts2 := dest.normalizeVideoTimestamps90k(1000, 1000)
@@ -787,7 +926,7 @@ func TestHLSFileDestination_NormalizeVideoTimestamps90k_StrictlyMonotonic(t *tes
 }
 
 func TestHLSFileDestination_ComputeTargetDuration_UsesLongestSegment(t *testing.T) {
-	dest := &hlsLive{
+	dest := &hlsLiveAsync{
 		targetDuration: 2,
 		entries: []hlsSegmentEntry{
 			{Duration: 1.2},
@@ -823,7 +962,7 @@ func TestHLSFileDestination_PlaylistTargetDurationReflectsSegments(t *testing.T)
 	if err != nil {
 		t.Fatalf("AdaptFolder failed: %v", err)
 	}
-	dest := &hlsLive{
+	dest := &hlsLiveAsync{
 		url:            outDir,
 		outputFolder:   outFolder,
 		targetDuration: 2,
@@ -883,7 +1022,7 @@ func TestWritePlaylistLocked_DiscontinuityOnlyOnGap(t *testing.T) {
 		t.Fatalf("AdaptFolder failed: %v", err)
 	}
 
-	contiguous := &hlsLive{
+	contiguous := &hlsLiveAsync{
 		url:            outDir,
 		outputFolder:   outFolder,
 		targetDuration: 2,
@@ -909,7 +1048,7 @@ func TestWritePlaylistLocked_DiscontinuityOnlyOnGap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AdaptFolder failed: %v", err)
 	}
-	gapped := &hlsLive{
+	gapped := &hlsLiveAsync{
 		url:            outDir2,
 		outputFolder:   outFolder2,
 		targetDuration: 2,
@@ -927,6 +1066,183 @@ func TestWritePlaylistLocked_DiscontinuityOnlyOnGap(t *testing.T) {
 	}
 }
 
+func TestWritePlaylistLocked_DiscontinuityOnExplicitSwitchBoundary(t *testing.T) {
+	outDir := t.TempDir()
+	outFolderRaw := storage.NewLocal(&config.Config{
+		Storage: config.Storage{RecordingsRoot: outDir},
+	}).RecordingsRoot()
+	outFolder, err := shared.AdaptFolder(outFolderRaw)
+	if err != nil {
+		t.Fatalf("AdaptFolder failed: %v", err)
+	}
+
+	dest := &hlsLiveAsync{
+		url:            outDir,
+		outputFolder:   outFolder,
+		targetDuration: 2,
+		entries: []hlsSegmentEntry{
+			{Seq: 7, FileName: "seg_000007.ts", Duration: 2.0},
+			{Seq: 8, FileName: "seg_000008.ts", Duration: 2.0, Discontinuity: true},
+		},
+	}
+	if err := dest.writePlaylistLocked(false); err != nil {
+		t.Fatalf("writePlaylistLocked: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(outDir, "stream.m3u8"))
+	if err != nil {
+		t.Fatalf("read playlist: %v", err)
+	}
+	text := string(data)
+	if strings.Count(text, "#EXT-X-DISCONTINUITY") != 1 {
+		t.Fatalf("expected exactly one discontinuity marker, got playlist:\n%s", text)
+	}
+	if !strings.Contains(text, "seg_000007.ts\n#EXT-X-DISCONTINUITY\n#EXTINF:2.000,\nseg_000008.ts") {
+		t.Fatalf("expected discontinuity before switched segment, got playlist:\n%s", text)
+	}
+}
+
+func TestHLSDestination_InputSwitch_RotatesAtNextKeyframeAndDropsUntilThen(t *testing.T) {
+	outDir := t.TempDir()
+	outFolderRaw := storage.NewLocal(&config.Config{
+		Storage: config.Storage{RecordingsRoot: outDir},
+	}).RecordingsRoot()
+	outFolder, err := shared.AdaptFolder(outFolderRaw)
+	if err != nil {
+		t.Fatalf("AdaptFolder failed: %v", err)
+	}
+
+	dest := &hlsLiveAsync{
+		id:              "hls-switch-boundary",
+		url:             outDir,
+		outputFolder:    outFolder,
+		segmentDuration: time.Second,
+		playlistSize:    6,
+		targetDuration:  2,
+		events:          shared.NewEventEmitter(16),
+	}
+	defer dest.events.Close()
+
+	dest.handleVideoFrame(&shared.Frame{
+		InputID:    "input-a",
+		Codec:      "h264",
+		IsKeyFrame: true,
+		PTS:        0,
+		DTS:        0,
+		Payload:    [][]byte{{0x67, 0x42, 0x00, 0x1f}, {0x68, 0xce, 0x38, 0x80}, {0x65, 0x88, 0x84}},
+	})
+
+	dest.handleAudioFrame(&shared.Frame{
+		InputID:    "input-b",
+		Codec:      "aac",
+		Payload:    [][]byte{{0x11, 0x22, 0x33}},
+		SampleRate: 44100,
+		PTS:        500 * time.Millisecond,
+	})
+	dest.handleVideoFrame(&shared.Frame{
+		InputID:    "input-b",
+		Codec:      "h264",
+		IsKeyFrame: false,
+		PTS:        time.Second,
+		DTS:        time.Second,
+		Payload:    [][]byte{{0x41, 0x9a, 0x22}},
+	})
+
+	if dest.TotalAudioFrames != 0 {
+		t.Fatalf("expected audio to be dropped during pending switch, got %d", dest.TotalAudioFrames)
+	}
+
+	dest.handleVideoFrame(&shared.Frame{
+		InputID:    "input-b",
+		Codec:      "h264",
+		IsKeyFrame: true,
+		PTS:        1500 * time.Millisecond,
+		DTS:        1500 * time.Millisecond,
+		Payload:    [][]byte{{0x67, 0x4d, 0x00, 0x1f}, {0x68, 0xee, 0x3c, 0x80}, {0x65, 0x88, 0x84}},
+	})
+
+	if dest.currentSegmentInputID != "input-b" {
+		t.Fatalf("expected active segment input to switch to input-b, got %q", dest.currentSegmentInputID)
+	}
+
+	if err := dest.closeCurrentSegmentLocked(false); err != nil {
+		t.Fatalf("closeCurrentSegmentLocked(final) failed: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(outDir, "stream.m3u8"))
+	if err != nil {
+		t.Fatalf("read playlist: %v", err)
+	}
+	text := string(data)
+	if strings.Count(text, "#EXT-X-DISCONTINUITY") != 1 {
+		t.Fatalf("expected exactly one discontinuity marker after switch, got:\n%s", text)
+	}
+	if !strings.Contains(text, "seg_000000.ts\n#EXT-X-DISCONTINUITY\n#EXTINF:") {
+		t.Fatalf("expected discontinuity before switched segment, got:\n%s", text)
+	}
+}
+
+func TestHLSDestination_HandleAudioFrame_AllowsSampleRateChange(t *testing.T) {
+	outDir := t.TempDir()
+	outFolderRaw := storage.NewLocal(&config.Config{
+		Storage: config.Storage{RecordingsRoot: outDir},
+	}).RecordingsRoot()
+	outFolder, err := shared.AdaptFolder(outFolderRaw)
+	if err != nil {
+		t.Fatalf("AdaptFolder failed: %v", err)
+	}
+
+	dest := &hlsLiveAsync{
+		id:              "hls-audio-rate-switch",
+		outputFolder:    outFolder,
+		segmentDuration: time.Second,
+		targetDuration:  2,
+		events:          shared.NewEventEmitter(16),
+		activeAudioRate: 48000,
+		audioSampleRate: 48000,
+	}
+	defer dest.events.Close()
+
+	if err := dest.openSegmentLocked(0); err != nil {
+		t.Fatalf("openSegmentLocked failed: %v", err)
+	}
+
+	dest.handleAudioFrame(&shared.Frame{
+		Codec:      "aac",
+		Payload:    [][]byte{{0x11, 0x22, 0x33}},
+		SampleRate: 44100,
+		PTS:        time.Second,
+	})
+
+	if dest.TotalAudioFrames != 1 {
+		t.Fatalf("expected active-source audio frame to be written after sample-rate change, got total=%d", dest.TotalAudioFrames)
+	}
+	if dest.activeAudioRate != 44100 {
+		t.Fatalf("expected active audio rate to update to 44100, got %d", dest.activeAudioRate)
+	}
+}
+
+func TestHLSDestination_ShouldDelaySegmentRotationForAudioAfterDiscontinuity(t *testing.T) {
+	dest := &hlsLiveAsync{
+		segmentDuration:        time.Second,
+		currentSegmentDisco:    true,
+		currentSegmentStart90k: 0,
+	}
+	dest.TotalAudioFrames = 4
+
+	if !dest.shouldDelaySegmentRotationForAudioLocked(durationTo90k(time.Second)) {
+		t.Fatal("expected discontinuity segment rotation to wait for first audio frame inside grace window")
+	}
+	if dest.shouldDelaySegmentRotationForAudioLocked(durationTo90k(2 * time.Second)) {
+		t.Fatal("expected discontinuity segment rotation grace window to expire at 2x segment duration")
+	}
+
+	dest.currentSegmentHasAudio = true
+	if dest.shouldDelaySegmentRotationForAudioLocked(durationTo90k(time.Second)) {
+		t.Fatal("expected segment with audio to rotate normally")
+	}
+}
+
 func TestHLSFileDestination_EmitsAbsoluteURLsInSegmentAndPlaylistEvents(t *testing.T) {
 	outDir := t.TempDir()
 	outFolderRaw := storage.NewLocal(&config.Config{
@@ -936,7 +1252,7 @@ func TestHLSFileDestination_EmitsAbsoluteURLsInSegmentAndPlaylistEvents(t *testi
 	if err != nil {
 		t.Fatalf("AdaptFolder failed: %v", err)
 	}
-	dest := &hlsLive{
+	dest := &hlsLiveAsync{
 		id:              "hls-event-url-test",
 		outputFolder:    outFolder,
 		segmentDuration: time.Second,

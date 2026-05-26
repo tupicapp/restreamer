@@ -2,7 +2,6 @@ package streamfactory
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -85,10 +84,6 @@ func NewHLSOutput(id, outputPath string, opts HLSOutputOptions) (core.Stream, er
 	dir := abs
 	if strings.HasSuffix(strings.ToLower(abs), ".m3u8") {
 		dir = filepath.Dir(abs)
-	}
-
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return nil, fmt.Errorf("create output directory %q: %w", dir, err)
 	}
 
 	hlsOpts := make([]outputs.HLSLiveOption, 0, 4)

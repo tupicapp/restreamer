@@ -30,7 +30,6 @@ const (
 	// frames are held in pendingVideoBuf/pendingAudioBuf at any time. Draining
 	// starts as soon as at least one full segment is buffered.
 	maxBufferedSegments = 2
-	minBufferedSegments = 1
 )
 
 type hlsInput struct {

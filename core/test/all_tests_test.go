@@ -99,6 +99,7 @@ func TestAll(t *testing.T) {
 			{name: "SwitchRTMPCompatibleInputsKeepAVFlow", fn: TestSwitchRTMPCompatibleInputsKeepAVFlow, isSequential: true},
 			{name: "SwitchRTMPCompatibleInputsRemainDecodableAtHLSDestination", fn: TestSwitchRTMPCompatibleInputsRemainDecodableAtHLSDestination, isSequential: true},
 			{name: "SwitchRTMPCompatibleInputsRemainDecodableAtRTMPOutput", fn: TestSwitchRTMPCompatibleInputsRemainDecodableAtRTMPOutput, isSequential: true},
+			{name: "SwitchMixedHLSAndRTMPRemainDecodableAtHLSDestination", fn: TestSwitchMixedHLSAndRTMPRemainDecodableAtHLSDestination, isSequential: true},
 
 			// {name: "SwitchRTMPVideoLessInputsRemainDecodableAtHLSDestination", fn: TestSwitchRTMPVideoLessInputsRemainDecodableAtHLSDestination, isSequential: true},
 			// {name: "SwitchRTMPAudioLessInputsRemainDecodableAtHLSDestination", fn: TestSwitchRTMPAudioLessInputsRemainDecodableAtHLSDestination, isSequential: true},
