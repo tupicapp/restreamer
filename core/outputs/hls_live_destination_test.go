@@ -907,6 +907,35 @@ func TestHLSFileDestination_NormalizeAudioTimestamp90k_UsesAACFrameCadence(t *te
 	}
 }
 
+func TestHLSFileDestination_NormalizeAudioTimestamp90k_PreservesLargerRebasedPTS(t *testing.T) {
+	dest := &hlsLiveAsync{}
+
+	first := dest.normalizeAudioTimestamp90k(9000, 44100)
+	step := dest.nextAACAudioStep90k(44100)
+	rebasedAhead := first + step + 1800
+	second := dest.normalizeAudioTimestamp90k(rebasedAhead, 44100)
+
+	if second != rebasedAhead {
+		t.Fatalf("expected rebased audio pts to be preserved when ahead of cadence floor, got %d want %d", second, rebasedAhead)
+	}
+}
+
+func TestHLSFileDestination_NormalizeAudioTimestamp90k_LimitsLargeForwardJump(t *testing.T) {
+	dest := &hlsLiveAsync{}
+
+	first := dest.normalizeAudioTimestamp90k(9000, 44100)
+	largeJump := first + 25000
+	second := dest.normalizeAudioTimestamp90k(largeJump, 44100)
+
+	delta := second - first
+	if delta <= 0 {
+		t.Fatalf("expected positive audio progress, got delta=%d", delta)
+	}
+	if delta > 8400 {
+		t.Fatalf("expected large audio correction to be slewed instead of jumped, got delta=%d", delta)
+	}
+}
+
 func TestHLSFileDestination_NormalizeVideoTimestamps90k_StrictlyMonotonic(t *testing.T) {
 	dest := &hlsLiveAsync{}
 

@@ -854,7 +854,13 @@ func (o *hlsLiveAsync) normalizeAudioTimestamp90k(pts int64, sampleRate int) int
 
 	step := o.nextAACAudioStep90k(sampleRate)
 	expected := o.lastAudioPTS90k + step
-	pts = expected
+	if pts < expected {
+		pts = expected
+	}
+	maxForward := expected + 3*step
+	if pts > maxForward {
+		pts = maxForward
+	}
 	if pts <= o.lastAudioPTS90k {
 		pts = o.lastAudioPTS90k + maxInt64(1, step)
 	}
