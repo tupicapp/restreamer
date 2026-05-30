@@ -266,6 +266,9 @@ func (r *fmp4Segment) bufferVideoPacket(pts, dts time.Duration, au [][]byte, cod
 		Duration:   duration,
 		IsFile:     true,
 	}
+	if codec == "h264" {
+		frame.VideoSPS, frame.VideoPPS = h264ExtractSPSPPS(au)
+	}
 
 	r.state.lastVideoPTS = pts
 

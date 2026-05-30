@@ -297,6 +297,7 @@ func (r *hlsInputLive) onVideoFrame(pts, dts int64, au [][]byte, codec string, c
 			sps, pps := r.getH264ParameterSets()
 			frame.Payload = h264EnsureSPSPPSOnKeyFrame(frame.Payload, true, sps, pps)
 		}
+		frame.VideoSPS, frame.VideoPPS = r.getH264ParameterSets()
 	}
 
 	if frame.IsKeyFrame {

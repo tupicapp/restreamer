@@ -73,6 +73,8 @@ type RTMPInput struct {
 	h264ParamMu  sync.RWMutex
 	cachedSPS    []byte
 	cachedPPS    []byte
+	audioRateMu  sync.RWMutex
+	audioRateHz  int
 	closeInfoMu  sync.RWMutex
 	closeInfo    pkgrtmp.SessionCloseInfo
 	validatorMu  sync.RWMutex
@@ -309,6 +311,7 @@ func (s *RTMPInput) bufferVideoPacket(pts time.Duration, dts time.Duration, au [
 		InputID:    s.id,
 		SequenceID: sequenceID,
 	}
+	f.VideoSPS, f.VideoPPS = s.getH264ParameterSets()
 
 	f.IsKeyFrame = keyFrame
 
@@ -360,6 +363,7 @@ func (s *RTMPInput) bufferAudioPacket(pts time.Duration, au []byte) {
 		InputID:    s.id,
 		IsKeyFrame: true,
 		SequenceID: sequenceID,
+		SampleRate: s.audioSampleRate(),
 	}
 
 	s.gopMu.Lock()
@@ -397,6 +401,7 @@ func (s *RTMPInput) initTracks(r *gortmplib.Reader) error {
 				s.bufferVideoPacket(pts, dts, au)
 			})
 		case *codecs.MPEG4Audio:
+			s.setAudioSampleRate(codec.Config.SampleRate)
 			r.OnDataMPEG4Audio(track, func(pts time.Duration, au []byte) {
 				s.bufferAudioPacket(pts, au)
 			})
@@ -517,6 +522,24 @@ func (s *RTMPInput) setH264ParameterSets(sps, pps []byte) {
 	if len(pps) > 0 {
 		s.cachedPPS = cloneBytes(pps)
 	}
+}
+
+func (s *RTMPInput) setAudioSampleRate(rate int) {
+	if rate <= 0 {
+		return
+	}
+	s.audioRateMu.Lock()
+	s.audioRateHz = rate
+	s.audioRateMu.Unlock()
+}
+
+func (s *RTMPInput) audioSampleRate() int {
+	s.audioRateMu.RLock()
+	defer s.audioRateMu.RUnlock()
+	if s.audioRateHz > 0 {
+		return s.audioRateHz
+	}
+	return DefaultAudioRate
 }
 
 func (s *RTMPInput) updateH264ParameterSets(nalus [][]byte) {
@@ -709,6 +732,8 @@ func cloneFrameForWatcher(in *Frame) *Frame {
 	for i := range in.Payload {
 		out.Payload[i] = cloneBytes(in.Payload[i])
 	}
+	out.VideoSPS = cloneBytes(in.VideoSPS)
+	out.VideoPPS = cloneBytes(in.VideoPPS)
 	return &out
 }
 
