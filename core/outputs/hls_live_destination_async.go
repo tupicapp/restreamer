@@ -117,8 +117,11 @@ type hlsLiveAsync struct {
 	audioSampleRate int
 	activeAudioRate int
 	inputAudioRates map[string]int
+	pendingStartAudio []*shared.Frame
 	events          *shared.EventEmitter
 }
+
+const maxPendingHLSStartAudio = 256
 
 func newHLSLiveDestinationAsync(id string, outputFolder any, opts ...HLSLiveOption) (shared.Stream, error) {
 	folder, err := shared.AdaptFolder(outputFolder)
@@ -337,11 +340,22 @@ func (o *hlsLiveAsync) handleVideoFrame(frame *shared.Frame) {
 		return
 	}
 
-	if err := o.ensureSegmentLocked(frame.PTS); err != nil {
+	startPTS := frame.PTS
+	if o.currentSegmentWriter == nil {
+		startPTS = o.pendingStartPTSForInput(frame.InputID, startPTS)
+	}
+	if err := o.ensureSegmentLocked(startPTS); err != nil {
 		o.stateMu.Lock()
 		o.DroppedVideoFrames++
 		o.stateMu.Unlock()
 		getLogger().Warn("hls destination ensure segment failed", zap.String("output_id", o.id), zap.Error(err))
+		return
+	}
+	if err := o.flushPendingStartAudio(frame.InputID); err != nil {
+		o.stateMu.Lock()
+		o.DroppedVideoFrames++
+		o.stateMu.Unlock()
+		getLogger().Warn("hls destination flush startup audio failed", zap.String("output_id", o.id), zap.Error(err))
 		return
 	}
 
@@ -422,25 +436,30 @@ func (o *hlsLiveAsync) handleAudioFrame(frame *shared.Frame) {
 	}
 
 	if o.currentSegmentWriter == nil {
+		o.bufferPendingStartAudio(frame)
+		return
+	}
+
+	if err := o.writeAudioFrame(frame); err != nil {
 		o.stateMu.Lock()
 		o.DroppedAudioFrames++
 		o.stateMu.Unlock()
+		getLogger().Warn("hls destination write audio failed", zap.String("output_id", o.id), zap.Error(err))
 		return
+	}
+}
+
+func (o *hlsLiveAsync) writeAudioFrame(frame *shared.Frame) error {
+	if frame == nil {
+		return nil
 	}
 
 	if err := o.ensureSegmentLocked(frame.PTS); err != nil {
-		o.stateMu.Lock()
-		o.DroppedAudioFrames++
-		o.stateMu.Unlock()
-		getLogger().Warn("hls destination ensure segment failed", zap.String("output_id", o.id), zap.Error(err))
-		return
+		return err
 	}
 
 	if len(frame.Payload) == 0 {
-		o.stateMu.Lock()
-		o.DroppedAudioFrames++
-		o.stateMu.Unlock()
-		return
+		return nil
 	}
 
 	if frame.SampleRate > 0 && o.activeAudioRate != frame.SampleRate {
@@ -465,11 +484,7 @@ func (o *hlsLiveAsync) handleAudioFrame(frame *shared.Frame) {
 	}
 	pts90k = o.normalizeAudioTimestamp90k(pts90k, frame.SampleRate)
 	if err := o.currentSegmentWriter.WriteMPEG4Audio(o.audioTrack, pts90k, frame.Payload); err != nil {
-		o.stateMu.Lock()
-		o.DroppedAudioFrames++
-		o.stateMu.Unlock()
-		getLogger().Warn("hls destination write audio failed", zap.String("output_id", o.id), zap.Error(err))
-		return
+		return err
 	}
 
 	o.stateMu.Lock()
@@ -487,6 +502,7 @@ func (o *hlsLiveAsync) handleAudioFrame(frame *shared.Frame) {
 		o.currentSegmentLastPTS = ticks90kToDuration(pts90k)
 	}
 	o.currentSegmentHasAudio = true
+	return nil
 }
 
 func (o *hlsLiveAsync) ensureSegmentLocked(pts time.Duration) error {
@@ -709,29 +725,6 @@ func (o *hlsLiveAsync) writePlaylistLocked(endList bool) error {
 	return shared.WriteFileAtomic(o.outputFolder, "stream.m3u8", []byte(b.String()))
 }
 
-func (o *hlsLiveAsync) shouldDelaySegmentRotationForAudioLocked(nextDTS90k int64) bool {
-	if o.currentSegmentHasAudio {
-		return false
-	}
-
-	o.stateMu.RLock()
-	totalAudioFrames := o.TotalAudioFrames
-	o.stateMu.RUnlock()
-
-	if !o.currentSegmentDisco && totalAudioFrames == 0 && o.activeAudioRate == 0 {
-		return false
-	}
-
-	elapsed90k := nextDTS90k - o.currentSegmentStart90k
-	if elapsed90k < 0 {
-		return false
-	}
-
-	// Give discontinuity / audio-expected segments extra time to include the
-	// first AAC frame so downstream HLS readers can probe audio parameters.
-	return elapsed90k < durationTo90k(2*o.segmentDuration)
-}
-
 func (o *hlsLiveAsync) segmentURI(fileName string) string {
 	return shared.JoinURLPrefix(o.pathPrefix, strings.TrimLeft(fileName, "/"))
 }
@@ -759,6 +752,27 @@ func (o *hlsLiveAsync) computeTargetDuration() int {
 		}
 	}
 	return target
+}
+
+func (o *hlsLiveAsync) shouldDelaySegmentRotationForAudioLocked(nextDTS90k int64) bool {
+	if o.currentSegmentHasAudio {
+		return false
+	}
+
+	o.stateMu.RLock()
+	totalAudioFrames := o.TotalAudioFrames
+	o.stateMu.RUnlock()
+
+	if !o.currentSegmentDisco && totalAudioFrames == 0 && o.activeAudioRate == 0 {
+		return false
+	}
+
+	elapsed90k := nextDTS90k - o.currentSegmentStart90k
+	if elapsed90k < 0 {
+		return false
+	}
+
+	return elapsed90k < durationTo90k(2*o.segmentDuration)
 }
 
 func (o *hlsLiveAsync) handleVideoDiscontinuityLocked(frame *shared.Frame) (bool, error) {
@@ -824,6 +838,63 @@ func (o *hlsLiveAsync) setActiveInputAudioRate(inputID string) {
 	o.activeAudioRate = 0
 }
 
+func (o *hlsLiveAsync) bufferPendingStartAudio(frame *shared.Frame) {
+	if frame == nil {
+		return
+	}
+
+	cloned := cloneSharedFrame(frame)
+	if cloned == nil {
+		return
+	}
+	if len(o.pendingStartAudio) >= maxPendingHLSStartAudio {
+		copy(o.pendingStartAudio, o.pendingStartAudio[1:])
+		o.pendingStartAudio = o.pendingStartAudio[:maxPendingHLSStartAudio-1]
+	}
+	o.pendingStartAudio = append(o.pendingStartAudio, cloned)
+}
+
+func (o *hlsLiveAsync) pendingStartPTSForInput(inputID string, fallback time.Duration) time.Duration {
+	inputID = strings.TrimSpace(inputID)
+	if inputID == "" {
+		return fallback
+	}
+
+	start := fallback
+	for _, frame := range o.pendingStartAudio {
+		if frame == nil || strings.TrimSpace(frame.InputID) != inputID {
+			continue
+		}
+		if frame.PTS < start {
+			start = frame.PTS
+		}
+	}
+	return start
+}
+
+func (o *hlsLiveAsync) flushPendingStartAudio(inputID string) error {
+	inputID = strings.TrimSpace(inputID)
+	if inputID == "" || len(o.pendingStartAudio) == 0 {
+		return nil
+	}
+
+	pending := o.pendingStartAudio
+	o.pendingStartAudio = nil
+	for _, frame := range pending {
+		if frame == nil {
+			continue
+		}
+		if strings.TrimSpace(frame.InputID) != inputID {
+			o.pendingStartAudio = append(o.pendingStartAudio, frame)
+			continue
+		}
+		if err := o.writeAudioFrame(frame); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (o *hlsLiveAsync) normalizeAudioTimestamp90k(pts int64, sampleRate int) int64 {
 	if sampleRate <= 0 {
 		sampleRate = o.activeAudioRate
@@ -844,7 +915,7 @@ func (o *hlsLiveAsync) normalizeAudioTimestamp90k(pts int64, sampleRate int) int
 
 	step := o.nextAACAudioStep90k(sampleRate)
 	expected := o.lastAudioPTS90k + step
-	if pts < expected {
+	if pts+1 < expected {
 		pts = expected
 	}
 	maxForward := expected + 3*step
@@ -852,18 +923,11 @@ func (o *hlsLiveAsync) normalizeAudioTimestamp90k(pts int64, sampleRate int) int
 		pts = maxForward
 	}
 	if pts <= o.lastAudioPTS90k {
-		pts = o.lastAudioPTS90k + maxInt64(1, step)
+		pts = o.lastAudioPTS90k + 1
 	}
 
 	o.lastAudioPTS90k = pts
 	return pts
-}
-
-func maxInt64(a, b int64) int64 {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 func (o *hlsLiveAsync) nextAACAudioStep90k(sampleRate int) int64 {

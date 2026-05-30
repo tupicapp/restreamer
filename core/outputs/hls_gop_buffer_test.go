@@ -109,6 +109,9 @@ func TestHLSGOPBuffer_SwitchRequiresDecodableKeyframeAndHoldsAudio(t *testing.T)
 		if f.InputID == "B" && f.Codec == "aac" && f.PTS < bKeyPTS {
 			t.Fatalf("audio from B preceded decodable cut: audioPTS=%v keyPTS=%v", f.PTS, bKeyPTS)
 		}
+		if f.InputID == "A" {
+			t.Fatalf("old-input frame leaked after discontinuity commit: codec=%s seq=%d pts=%v", f.Codec, f.SequenceID, f.PTS)
+		}
 	}
 }
 
@@ -166,5 +169,86 @@ func TestHLSTimelineRebaser_AudioTimestampResetDoesNotDragVideoTimeline(t *testi
 	}
 	if skew > 60*time.Millisecond {
 		t.Fatalf("expected audio/video skew to stay bounded after audio reset, got %v", skew)
+	}
+}
+
+func TestHLSTimelineRebaser_SwitchAudioAnchorIsSmoothed(t *testing.T) {
+	r := newHLSTimelineRebaser()
+
+	video := func(inputID string, seq int64, pts time.Duration, key bool) *shared.Frame {
+		payload := [][]byte{{0x67, 0x42, 0x00, 0x1f}, {0x68, 0xce, 0x38, 0x80}, {0x65, 0x88, 0x84}}
+		if !key {
+			payload = [][]byte{{0x41, 0x9a, 0x22}}
+		}
+		return &shared.Frame{
+			InputID:    inputID,
+			Codec:      "h264",
+			Payload:    payload,
+			IsKeyFrame: key,
+			PTS:        pts,
+			DTS:        pts,
+			Duration:   33 * time.Millisecond,
+			SequenceID: seq,
+		}
+	}
+	audio := func(inputID string, seq int64, pts time.Duration) *shared.Frame {
+		return &shared.Frame{
+			InputID:    inputID,
+			Codec:      "aac",
+			Payload:    [][]byte{{0x11, 0x22}},
+			IsKeyFrame: true,
+			PTS:        pts,
+			DTS:        pts,
+			Duration:   23 * time.Millisecond,
+			SequenceID: seq,
+		}
+	}
+
+	_ = r.Process(video("A", 1, 100*time.Millisecond, true))
+	outA1 := r.Process(audio("A", 1, 123*time.Millisecond))
+	outA2 := r.Process(audio("A", 2, 146*time.Millisecond))
+	_ = r.Process(video("A", 2, 133*time.Millisecond, false))
+
+	_ = r.Process(audio("B", 1, 700*time.Millisecond))
+	switchOut := r.Process(video("B", 1, 180*time.Millisecond, true))
+	lateAudioOut := r.Process(audio("B", 2, 730*time.Millisecond))
+
+	if len(outA1) != 1 || len(outA2) != 1 {
+		t.Fatalf("expected one output frame from steady-state audio packets")
+	}
+
+	var outBKey *shared.Frame
+	var firstBAudio *shared.Frame
+	for _, f := range switchOut {
+		if f == nil {
+			continue
+		}
+		if f.Codec == "h264" && outBKey == nil {
+			outBKey = f
+		}
+		if f.Codec == "aac" && firstBAudio == nil {
+			firstBAudio = f
+		}
+	}
+	for _, f := range lateAudioOut {
+		if f != nil && f.Codec == "aac" && firstBAudio == nil {
+			firstBAudio = f
+		}
+	}
+
+	if outBKey == nil || firstBAudio == nil {
+		t.Fatalf("expected switch output to contain committed keyframe and audio")
+	}
+
+	audioJump := firstBAudio.PTS - outA2[0].PTS
+	if audioJump <= 0 {
+		t.Fatalf("expected forward audio progress after switch, got %v", audioJump)
+	}
+	if audioJump > 100*time.Millisecond {
+		t.Fatalf("expected smoothed post-switch audio anchor, got jump %v", audioJump)
+	}
+
+	if firstBAudio.PTS < outBKey.PTS {
+		t.Fatalf("expected switched audio to remain at or after switch keyframe, got audio=%v key=%v", firstBAudio.PTS, outBKey.PTS)
 	}
 }

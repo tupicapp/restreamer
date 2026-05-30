@@ -258,6 +258,10 @@ func (g *hlsGOPBuffer) runScheduler() {
 			}
 
 			g.outMu.Lock()
+			if containsHLSDiscontinuity(outs) {
+				g.outHeap = g.outHeap[:0]
+				g.pacingInit = false
+			}
 			for _, f := range outs {
 				if f == nil {
 					continue
@@ -279,6 +283,15 @@ func (g *hlsGOPBuffer) runScheduler() {
 			g.outMu.Unlock()
 		}
 	}
+}
+
+func containsHLSDiscontinuity(frames []*shared.Frame) bool {
+	for _, frame := range frames {
+		if frame != nil && frame.Discontinuity {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *hlsGOPBuffer) emit(f *shared.Frame) bool {
@@ -417,8 +430,8 @@ func (r *hlsTimelineRebaser) Process(in *shared.Frame) []*shared.Frame {
 			if step <= 0 {
 				step = 33 * time.Millisecond
 			}
-			if r.lastOutPTS > 0 {
-				r.outVideoBasePTS = r.lastOutPTS + step
+			if r.lastOutVideoPTS > 0 {
+				r.outVideoBasePTS = r.lastOutVideoPTS + step
 			} else {
 				r.outVideoBasePTS = 0
 			}
@@ -527,8 +540,8 @@ func (r *hlsTimelineRebaser) rebaseOneLocked(f *shared.Frame) *shared.Frame {
 			}
 
 			r.origVideoBasePTS = origPTS
-			if r.lastOutPTS > 0 {
-				r.outVideoBasePTS = r.lastOutPTS + step
+			if r.lastOutVideoPTS > 0 {
+				r.outVideoBasePTS = r.lastOutVideoPTS + step
 			} else {
 				r.outVideoBasePTS = 0
 			}
@@ -628,22 +641,40 @@ func (r *hlsTimelineRebaser) rebaseOneLocked(f *shared.Frame) *shared.Frame {
 func (r *hlsTimelineRebaser) establishAudioMappingLocked(origPTS time.Duration) {
 	r.origAudioBasePTS = origPTS
 
+	step := r.lastAudioDur
+	if step <= 0 {
+		step = 23 * time.Millisecond
+	}
+
+	desired := time.Duration(0)
 	if r.haveVideoMapping {
 		offset := origPTS - r.origVideoBasePTS
 		if offset < 0 {
 			offset = 0
 		}
-		r.outAudioBasePTS = r.outVideoBasePTS + offset
+		desired = r.outVideoBasePTS + offset
 	} else if r.lastOutAudioPTS > 0 {
-		step := r.lastAudioDur
-		if step <= 0 {
-			step = 23 * time.Millisecond
-		}
-		r.outAudioBasePTS = r.lastOutAudioPTS + step
+		desired = r.lastOutAudioPTS + step
 	} else {
-		r.outAudioBasePTS = 0
+		desired = 0
 	}
 
+	if r.lastOutAudioPTS > 0 {
+		min := r.lastOutAudioPTS + step
+		if desired < min {
+			desired = min
+		}
+
+		// Smooth switch and re-anchor corrections so audio continuity is kept
+		// within roughly one video frame budget instead of jumping by the
+		// full source-side A/V offset in a single packet.
+		max := r.lastOutAudioPTS + 4*step
+		if desired > max {
+			desired = max
+		}
+	}
+
+	r.outAudioBasePTS = desired
 	r.haveAudioMapping = true
 }
 

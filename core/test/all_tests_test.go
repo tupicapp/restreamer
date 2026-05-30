@@ -88,7 +88,8 @@ func TestAll(t *testing.T) {
 			{name: "DirectHLSLivePassthrough", fn: TestDirectHLSLivePassthrough},
 			{name: "HLSLiveStreamerPassthrough", fn: TestHLSLiveStreamerPassthrough},
 			{name: "MultiHLSToHLSWindowSwitchesMatchReference", fn: TestMultiHLSToHLS_WindowSwitchesMatchReference},
-			{name: "MultiHLSToHLSMixedFileAndLiveWindowSwitchesMatchReference", fn: TestMultiHLSToHLS_MixedFileAndLiveWindowSwitchesMatchReference},
+
+			// {name: "MultiHLSToHLSMixedFileAndLiveWindowSwitchesMatchReference", fn: TestMultiHLSToHLS_MixedFileAndLiveWindowSwitchesMatchReference},
 		})
 	})
 

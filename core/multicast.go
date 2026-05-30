@@ -69,23 +69,26 @@ func (m *multiCaster) writeVideo() {
 			// Multicast frame to all outputs (rate control handled by GOPBuffer)
 			m.streamer.outputsMu.RLock()
 			for _, output := range m.streamer.outputs {
-				wg.Add(1)
-				go func(out Stream, f *Frame) {
+				// wg.Add(1)
+				// go func(out Stream, f *Frame) {
 
-					defer wg.Done()
-					select {
-					case out.GetVideoChan() <- f:
-					case <-time.After(1000 * time.Millisecond):
-						logger.Warn("multicast: output dropped video frame",
-							zap.String("output_id", out.GetID()),
-							zap.Int64("sequence_id", f.SequenceID),
-							zap.Duration("pts", f.PTS),
-							zap.String("input_id", f.InputID),
-							zap.Bool("is_keyframe", f.IsKeyFrame))
-					}
-				}(output, frame)
+				out := output
+				f := frame
+
+				defer wg.Done()
+				select {
+				case out.GetVideoChan() <- f:
+				case <-time.After(1000 * time.Millisecond):
+					logger.Warn("multicast: output dropped video frame",
+						zap.String("output_id", out.GetID()),
+						zap.Int64("sequence_id", f.SequenceID),
+						zap.Duration("pts", f.PTS),
+						zap.String("input_id", f.InputID),
+						zap.Bool("is_keyframe", f.IsKeyFrame))
+				}
+				// }(output, frame)
 			}
-			wg.Wait()
+			// wg.Wait()
 
 			m.streamer.outputsMu.RUnlock()
 		}
@@ -118,22 +121,24 @@ func (m *multiCaster) writeAudio() {
 			// Multicast frame to all outputs (rate control handled by GOPBuffer)
 			m.streamer.outputsMu.RLock()
 			for _, output := range m.streamer.outputs {
-				wg.Add(1)
-				go func(out Stream, f *Frame) {
-					defer wg.Done()
-					select {
-					case out.GetAudioChan() <- f:
-					case <-time.After(1000 * time.Millisecond):
-						logger.Warn("multicast: output dropped audio frame",
-							zap.String("output_id", out.GetID()),
-							zap.Int64("sequence_id", f.SequenceID),
-							zap.Duration("pts", f.PTS),
-							zap.String("input_id", f.InputID))
-					}
-				}(output, frame)
+				// wg.Add(1)
+				out := output
+				f := frame
+				// go func(out Stream, f *Frame) {
+				defer wg.Done()
+				select {
+				case out.GetAudioChan() <- f:
+				case <-time.After(1000 * time.Millisecond):
+					logger.Warn("multicast: output dropped audio frame",
+						zap.String("output_id", out.GetID()),
+						zap.Int64("sequence_id", f.SequenceID),
+						zap.Duration("pts", f.PTS),
+						zap.String("input_id", f.InputID))
+				}
+				// }(output, frame)
 			}
 
-			wg.Wait()
+			// wg.Wait()
 
 			m.streamer.outputsMu.RUnlock()
 		}

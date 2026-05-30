@@ -3,3 +3,4 @@ FFmpeg
 core/test/tests
 core/test/testdata
 out
+record/

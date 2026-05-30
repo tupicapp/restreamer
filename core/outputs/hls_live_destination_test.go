@@ -254,6 +254,66 @@ func TestHLSFileDestination_DoesNotStartSegmentFromAudioOnly(t *testing.T) {
 	}
 }
 
+func TestHLSFileDestination_BuffersStartupAudioUntilFirstVideo(t *testing.T) {
+	outDir := filepath.Join(t.TempDir(), "hls")
+	outFolderRaw := storage.NewLocal(&config.Config{
+		Storage: config.Storage{RecordingsRoot: filepath.Dir(outDir)},
+	}).RecordingsRoot().Folder(filepath.Base(outDir))
+	outFolder, err := shared.AdaptFolder(outFolderRaw)
+	if err != nil {
+		t.Fatalf("AdaptFolder failed: %v", err)
+	}
+
+	dest := &hlsLiveAsync{
+		id:              "hls-start-audio-test",
+		outputFolder:    outFolder,
+		segmentDuration: time.Second,
+		playlistSize:    5,
+		targetDuration:  1,
+		events:          shared.NewEventEmitter(32),
+	}
+
+	audioLead := time.Second / 90000
+	dest.handleAudioFrame(&shared.Frame{
+		InputID:    "input-a",
+		Codec:      "aac",
+		Payload:    [][]byte{{0x11, 0x22, 0x33}},
+		IsKeyFrame: true,
+		PTS:        100*time.Millisecond - audioLead,
+		DTS:        100*time.Millisecond - audioLead,
+		Duration:   23 * time.Millisecond,
+		SampleRate: 48000,
+		SequenceID: 1,
+	})
+	dest.handleVideoFrame(&shared.Frame{
+		InputID:    "input-a",
+		Codec:      "h264",
+		Payload:    [][]byte{{0x67, 0x42, 0x00, 0x1f}, {0x68, 0xce, 0x38, 0x80}, {0x65, 0x88, 0x84}},
+		IsKeyFrame: true,
+		PTS:        100 * time.Millisecond,
+		DTS:        100 * time.Millisecond,
+		Duration:   33 * time.Millisecond,
+		SequenceID: 2,
+	})
+	dest.handleAudioFrame(&shared.Frame{
+		InputID:    "input-a",
+		Codec:      "aac",
+		Payload:    [][]byte{{0x44, 0x55, 0x66}},
+		IsKeyFrame: true,
+		PTS:        123 * time.Millisecond,
+		DTS:        123 * time.Millisecond,
+		Duration:   23 * time.Millisecond,
+		SampleRate: 48000,
+		SequenceID: 3,
+	})
+	if state := dest.State(); state == nil || state.TotalAudioFrames != 2 || state.TotalVideoFrames != 1 {
+		t.Fatalf("expected buffered startup audio plus steady-state audio to be written, got state=%+v", state)
+	}
+	if len(dest.pendingStartAudio) != 0 {
+		t.Fatalf("expected startup audio buffer to be flushed after first video, pending=%d", len(dest.pendingStartAudio))
+	}
+}
+
 func waitForHLSArtifacts(t *testing.T, outDir string, timeout time.Duration, minSegments int) {
 	t.Helper()
 
@@ -435,6 +495,7 @@ func firstPacketPTSSeconds(t *testing.T, segmentPath string) float64 {
 	t.Fatalf("failed to parse first packet pts from %s: %q", segmentPath, line)
 	return 0
 }
+
 
 func TestHLSDestination_RecordMode_KeepsAllEntriesInPlaylist(t *testing.T) {
 	outDir := t.TempDir()
@@ -920,19 +981,32 @@ func TestHLSFileDestination_NormalizeAudioTimestamp90k_PreservesLargerRebasedPTS
 	}
 }
 
+func TestHLSFileDestination_NormalizeAudioTimestamp90k_PreservesOneTickSlack(t *testing.T) {
+	dest := &hlsLiveAsync{}
+
+	first := dest.normalizeAudioTimestamp90k(30717, 48000)
+	second := dest.normalizeAudioTimestamp90k(32637, 48000)
+
+	if first != 30717 {
+		t.Fatalf("expected first audio pts to pass through, got %d", first)
+	}
+	if second != 32637 {
+		t.Fatalf("expected one-tick-short audio pts to be preserved, got %d", second)
+	}
+}
+
 func TestHLSFileDestination_NormalizeAudioTimestamp90k_LimitsLargeForwardJump(t *testing.T) {
 	dest := &hlsLiveAsync{}
 
 	first := dest.normalizeAudioTimestamp90k(9000, 44100)
-	largeJump := first + 25000
-	second := dest.normalizeAudioTimestamp90k(largeJump, 44100)
-
+	second := dest.normalizeAudioTimestamp90k(first+25000, 44100)
 	delta := second - first
+
 	if delta <= 0 {
 		t.Fatalf("expected positive audio progress, got delta=%d", delta)
 	}
 	if delta > 8400 {
-		t.Fatalf("expected large audio correction to be slewed instead of jumped, got delta=%d", delta)
+		t.Fatalf("expected large rebased audio jump to be bounded, got delta=%d", delta)
 	}
 }
 
@@ -1252,6 +1326,52 @@ func TestHLSDestination_HandleAudioFrame_AllowsSampleRateChange(t *testing.T) {
 	}
 	if dest.activeAudioRate != 44100 {
 		t.Fatalf("expected active audio rate to update to 44100, got %d", dest.activeAudioRate)
+	}
+}
+
+func TestHLSDestination_KeyframeRotationDoesNotWaitForAudioGrace(t *testing.T) {
+	outDir := t.TempDir()
+	outFolderRaw := storage.NewLocal(&config.Config{
+		Storage: config.Storage{RecordingsRoot: outDir},
+	}).RecordingsRoot()
+	outFolder, err := shared.AdaptFolder(outFolderRaw)
+	if err != nil {
+		t.Fatalf("AdaptFolder failed: %v", err)
+	}
+
+	dest := &hlsLiveAsync{
+		id:              "hls-keyframe-rotation-priority",
+		url:             outDir,
+		outputFolder:    outFolder,
+		segmentDuration: time.Second,
+		targetDuration:  2,
+		events:          shared.NewEventEmitter(16),
+	}
+	defer dest.events.Close()
+
+	dest.handleVideoFrame(&shared.Frame{
+		InputID:    "input-a",
+		Codec:      "h264",
+		IsKeyFrame: true,
+		PTS:        0,
+		DTS:        0,
+		Payload:    [][]byte{{0x67, 0x42, 0x00, 0x1f}, {0x68, 0xce, 0x38, 0x80}, {0x65, 0x88, 0x84}},
+	})
+
+	dest.handleVideoFrame(&shared.Frame{
+		InputID:    "input-a",
+		Codec:      "h264",
+		IsKeyFrame: true,
+		PTS:        1100 * time.Millisecond,
+		DTS:        1100 * time.Millisecond,
+		Payload:    [][]byte{{0x67, 0x42, 0x00, 0x20}, {0x68, 0xce, 0x38, 0x81}, {0x65, 0x88, 0x85}},
+	})
+
+	if _, err := os.Stat(filepath.Join(outDir, "seg_000000.ts")); err != nil {
+		t.Fatalf("expected keyframe rotation to close and write previous segment without waiting for audio, got err=%v", err)
+	}
+	if dest.segmentIndex < 2 {
+		t.Fatalf("expected rotation to open a new segment on keyframe boundary, got segmentIndex=%d", dest.segmentIndex)
 	}
 }
 
