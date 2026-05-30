@@ -1044,6 +1044,32 @@ func TestHLSFileDestination_ComputeTargetDuration_UsesLongestSegment(t *testing.
 	}
 }
 
+func TestHLSFileDestination_ComputeTargetDuration_DoesNotShrinkAcrossWindows(t *testing.T) {
+	dest := &hlsLiveAsync{
+		targetDuration: 2,
+		entries: []hlsSegmentEntry{
+			{Duration: 6.4},
+			{Duration: 4.2},
+		},
+	}
+
+	first := dest.computeTargetDuration()
+	if first != 7 {
+		t.Fatalf("expected first target duration 7, got %d", first)
+	}
+
+	// Simulate the next live window after the 6.4s segment rotated out.
+	dest.entries = []hlsSegmentEntry{
+		{Duration: 4.2},
+		{Duration: 4.1},
+	}
+
+	second := dest.computeTargetDuration()
+	if second != 7 {
+		t.Fatalf("expected target duration to remain 7, got %d", second)
+	}
+}
+
 func TestDurationTo90k_UsesExactIntegerMath(t *testing.T) {
 	pts := durationTo90k(1001 * time.Millisecond)
 	if pts != 90090 {

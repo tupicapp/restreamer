@@ -1,7 +1,6 @@
 package irajstreamer
 
 import (
-	"sync"
 	"time"
 
 	"github.com/tupicapp/restreamer/core/logger"
@@ -46,7 +45,7 @@ func (m *multiCaster) Start() {
 // Rate control is handled by GOPBuffer
 func (m *multiCaster) writeVideo() {
 	logger := logger.GetLogger()
-	wg := sync.WaitGroup{}
+	// wg := sync.WaitGroup{}
 
 	defer func() {
 		m.streamer.outputsMu.Lock()
@@ -75,7 +74,7 @@ func (m *multiCaster) writeVideo() {
 				out := output
 				f := frame
 
-				defer wg.Done()
+				// defer wg.Done()
 				select {
 				case out.GetVideoChan() <- f:
 				case <-time.After(1000 * time.Millisecond):
@@ -99,7 +98,7 @@ func (m *multiCaster) writeVideo() {
 // Rate control is handled by GOPBuffer
 func (m *multiCaster) writeAudio() {
 	logger := logger.GetLogger()
-	wg := sync.WaitGroup{}
+	// wg := sync.WaitGroup{}
 
 	defer func() {
 		m.streamer.outputsMu.Lock()
@@ -125,7 +124,7 @@ func (m *multiCaster) writeAudio() {
 				out := output
 				f := frame
 				// go func(out Stream, f *Frame) {
-				defer wg.Done()
+				// defer wg.Done()
 				select {
 				case out.GetAudioChan() <- f:
 				case <-time.After(1000 * time.Millisecond):

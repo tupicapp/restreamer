@@ -751,7 +751,13 @@ func (o *hlsLiveAsync) computeTargetDuration() int {
 			target = ceil
 		}
 	}
-	return target
+	if target > o.targetDuration {
+		o.targetDuration = target
+	}
+	if o.targetDuration < 1 {
+		o.targetDuration = 1
+	}
+	return o.targetDuration
 }
 
 func (o *hlsLiveAsync) shouldDelaySegmentRotationForAudioLocked(nextDTS90k int64) bool {
