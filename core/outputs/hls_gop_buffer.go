@@ -13,6 +13,10 @@ const (
 	defaultHLSGOPInputBuffer  = 4096
 	defaultHLSGOPReadyBuffer  = 1024
 	maxHLSBufferedSwitchAudio = 500
+	maxHLSPendingAudioWindow  = 400 * time.Millisecond
+	maxHLSResumeBacklogWindow = 400 * time.Millisecond
+	maxHLSOverdueEmitDrop     = 800 * time.Millisecond
+	maxHLSPacingIdleReset     = 1200 * time.Millisecond
 )
 
 type hlsBufferedOrderFrame struct {
@@ -195,6 +199,14 @@ func (g *hlsGOPBuffer) runScheduler() {
 				break
 			}
 
+			// Live input can recover from dead sources with a burst of overdue
+			// frames. Drop very late packets instead of fast-forwarding them.
+			if !top.frame.IsFile && wait < -maxHLSOverdueEmitDrop {
+				heap.Pop(&g.outHeap)
+				g.outMu.Unlock()
+				continue
+			}
+
 			popped := heap.Pop(&g.outHeap).(hlsBufferedOrderFrame)
 			g.outMu.Unlock()
 
@@ -262,6 +274,7 @@ func (g *hlsGOPBuffer) runScheduler() {
 				g.outHeap = g.outHeap[:0]
 				g.pacingInit = false
 			}
+			g.resetPacingAfterIdleLocked(outs)
 			for _, f := range outs {
 				if f == nil {
 					continue
@@ -283,6 +296,53 @@ func (g *hlsGOPBuffer) runScheduler() {
 			g.outMu.Unlock()
 		}
 	}
+}
+
+func (g *hlsGOPBuffer) resetPacingAfterIdleLocked(outs []*shared.Frame) {
+	if len(outs) == 0 || g.lastEmit.IsZero() || time.Since(g.lastEmit) < maxHLSPacingIdleReset {
+		return
+	}
+
+	live := false
+	latestOrder := time.Duration(0)
+	for _, f := range outs {
+		if f == nil {
+			continue
+		}
+		if !f.IsFile {
+			live = true
+		}
+		orderTime := f.PTS
+		if isHLSVideoCodec(f.Codec) {
+			orderTime = f.DTS
+			if orderTime == 0 {
+				orderTime = f.PTS
+			}
+		}
+		if orderTime > latestOrder {
+			latestOrder = orderTime
+		}
+	}
+	if !live {
+		return
+	}
+
+	minKeep := latestOrder - maxHLSResumeBacklogWindow
+	if minKeep < 0 {
+		minKeep = 0
+	}
+	if len(g.outHeap) > 0 {
+		trimmed := make(hlsBufferedOrderHeap, 0, len(g.outHeap))
+		for _, item := range g.outHeap {
+			if item.frame != nil && !item.frame.IsFile && item.orderTime < minKeep {
+				continue
+			}
+			trimmed = append(trimmed, item)
+		}
+		g.outHeap = trimmed
+		heap.Init(&g.outHeap)
+	}
+	g.pacingInit = false
 }
 
 func containsHLSDiscontinuity(frames []*shared.Frame) bool {
@@ -378,7 +438,7 @@ func (r *hlsTimelineRebaser) Process(in *shared.Frame) []*shared.Frame {
 
 	if isVideo {
 		r.lastVideoDur = saneHLSDuration(f, r.lastVideoDur)
-		r.cacheH264ParameterSetsLocked(f.InputID, f.Codec, f.Payload)
+		r.cacheH264ParameterSetsLocked(f.InputID, f.Codec, f.Payload, f.VideoSPS, f.VideoPPS)
 	} else {
 		r.lastAudioDur = saneHLSDuration(f, r.lastAudioDur)
 		f.IsKeyFrame = true
@@ -409,6 +469,7 @@ func (r *hlsTimelineRebaser) Process(in *shared.Frame) []*shared.Frame {
 		if isAudio && f.InputID == r.pendingInput {
 			if len(r.pendingAudio) < maxHLSBufferedSwitchAudio {
 				r.pendingAudio = append(r.pendingAudio, f)
+				r.trimPendingAudioByPTSLocked()
 			}
 			return nil
 		}
@@ -448,10 +509,14 @@ func (r *hlsTimelineRebaser) Process(in *shared.Frame) []*shared.Frame {
 			}
 			out = append(out, keyframe)
 			for _, af := range r.pendingAudio {
+				if af == nil {
+					continue
+				}
 				audioOrigPTS := af.PTS
 				if audioOrigPTS == 0 && af.DTS != 0 {
 					audioOrigPTS = af.DTS
 				}
+				// Keep only audio at/after the committed cut point.
 				if audioOrigPTS < r.origVideoBasePTS {
 					continue
 				}
@@ -486,7 +551,7 @@ func (r *hlsTimelineRebaser) canCommitSwitchLocked(f *shared.Frame) bool {
 	return hasSPS && hasPPS
 }
 
-func (r *hlsTimelineRebaser) cacheH264ParameterSetsLocked(inputID, codec string, nalus [][]byte) {
+func (r *hlsTimelineRebaser) cacheH264ParameterSetsLocked(inputID, codec string, nalus [][]byte, frameSPS, framePPS []byte) {
 	if codec != "h264" {
 		return
 	}
@@ -501,6 +566,12 @@ func (r *hlsTimelineRebaser) cacheH264ParameterSetsLocked(inputID, codec string,
 		r.cachedH264PPSByInput = make(map[string][]byte)
 	}
 	sps, pps := h264ExtractSPSPPS(nalus)
+	if len(frameSPS) > 0 {
+		sps = cloneBytes(frameSPS)
+	}
+	if len(framePPS) > 0 {
+		pps = cloneBytes(framePPS)
+	}
 	if len(sps) > 0 {
 		r.cachedH264SPSByInput[inputID] = sps
 	}
@@ -706,6 +777,40 @@ func (r *hlsTimelineRebaser) updateLastSourcePTSLocked(isVideo, isAudio bool, or
 		r.lastSourceAudioPTS = origPTS
 		r.haveLastSourceAudioPTS = true
 	}
+}
+
+func (r *hlsTimelineRebaser) trimPendingAudioByPTSLocked() {
+	if len(r.pendingAudio) < 2 {
+		return
+	}
+
+	latest := sourcePTSOrDTS(r.pendingAudio[len(r.pendingAudio)-1])
+	if latest <= 0 {
+		return
+	}
+	minPTS := latest - maxHLSPendingAudioWindow
+
+	keepFrom := 0
+	for i, af := range r.pendingAudio {
+		pts := sourcePTSOrDTS(af)
+		if pts <= 0 || pts >= minPTS {
+			keepFrom = i
+			break
+		}
+	}
+	if keepFrom > 0 {
+		r.pendingAudio = append(r.pendingAudio[:0], r.pendingAudio[keepFrom:]...)
+	}
+}
+
+func sourcePTSOrDTS(f *shared.Frame) time.Duration {
+	if f == nil {
+		return 0
+	}
+	if f.PTS != 0 {
+		return f.PTS
+	}
+	return f.DTS
 }
 
 func saneHLSDuration(f *shared.Frame, fallback time.Duration) time.Duration {

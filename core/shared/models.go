@@ -166,6 +166,8 @@ type Frame struct {
 	GOPID      int64
 	IsFile     bool
 	SampleRate int // audio sample rate in Hz, 0 if unknown
+	VideoSPS   []byte
+	VideoPPS   []byte
 }
 
 type State struct {

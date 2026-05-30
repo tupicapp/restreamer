@@ -704,6 +704,8 @@ func cloneCompatFrame(frame *Frame) *Frame {
 			out.Payload[i] = append([]byte(nil), payload...)
 		}
 	}
+	out.VideoSPS = append([]byte(nil), frame.VideoSPS...)
+	out.VideoPPS = append([]byte(nil), frame.VideoPPS...)
 	return &out
 }
 

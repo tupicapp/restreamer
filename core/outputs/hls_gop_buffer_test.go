@@ -252,3 +252,57 @@ func TestHLSTimelineRebaser_SwitchAudioAnchorIsSmoothed(t *testing.T) {
 		t.Fatalf("expected switched audio to remain at or after switch keyframe, got audio=%v key=%v", firstBAudio.PTS, outBKey.PTS)
 	}
 }
+
+func TestHLSTimelineRebaser_LateAudioRemainsMonotonicWithoutClamp(t *testing.T) {
+	r := newHLSTimelineRebaser()
+
+	video := func(seq int64, pts time.Duration, key bool) *shared.Frame {
+		payload := [][]byte{{0x67, 0x42, 0x00, 0x1f}, {0x68, 0xce, 0x38, 0x80}, {0x65, 0x88, 0x84}}
+		if !key {
+			payload = [][]byte{{0x41, 0x9a, 0x22}}
+		}
+		return &shared.Frame{
+			InputID:    "A",
+			Codec:      "h264",
+			Payload:    payload,
+			IsKeyFrame: key,
+			PTS:        pts,
+			DTS:        pts,
+			Duration:   33 * time.Millisecond,
+			SequenceID: seq,
+		}
+	}
+	audio := func(seq int64, pts time.Duration) *shared.Frame {
+		return &shared.Frame{
+			InputID:    "A",
+			Codec:      "aac",
+			Payload:    [][]byte{{0x11, 0x22}},
+			IsKeyFrame: true,
+			PTS:        pts,
+			DTS:        pts,
+			Duration:   23 * time.Millisecond,
+			SequenceID: seq,
+		}
+	}
+
+	_ = r.Process(video(1, 0, true))
+	firstAudio := r.Process(audio(1, 23*time.Millisecond))
+	if len(firstAudio) != 1 {
+		t.Fatalf("expected first audio output, got %d", len(firstAudio))
+	}
+	_ = r.Process(video(2, 33*time.Millisecond, false))
+	_ = r.Process(video(3, 66*time.Millisecond, false))
+	_ = r.Process(video(4, 99*time.Millisecond, false))
+	_ = r.Process(video(5, 132*time.Millisecond, false))
+	_ = r.Process(video(6, 165*time.Millisecond, false))
+
+	// Source audio arrives with a large lag versus current source video clock.
+	out := r.Process(audio(1, 10*time.Millisecond))
+	if len(out) != 1 {
+		t.Fatalf("expected one rebased audio frame, got %d", len(out))
+	}
+
+	if out[0].PTS < firstAudio[0].PTS {
+		t.Fatalf("expected late audio to remain monotonic without clamp, got first=%v next=%v", firstAudio[0].PTS, out[0].PTS)
+	}
+}

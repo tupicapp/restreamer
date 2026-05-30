@@ -96,6 +96,8 @@ type hlsLiveAsync struct {
 	audioTrack *mediats.Track
 	cachedSPS  []byte
 	cachedPPS  []byte
+	cachedSPSByInput map[string][]byte
+	cachedPPSByInput map[string][]byte
 
 	TotalAudioFrames   int64
 	TotalVideoFrames   int64
@@ -117,6 +119,7 @@ type hlsLiveAsync struct {
 	audioSampleRate int
 	activeAudioRate int
 	inputAudioRates map[string]int
+	pendingSwitchInputID string
 	pendingStartAudio []*shared.Frame
 	events          *shared.EventEmitter
 }
@@ -326,7 +329,7 @@ func (o *hlsLiveAsync) started() bool {
 }
 
 func (o *hlsLiveAsync) handleVideoFrame(frame *shared.Frame) {
-	o.cacheH264ParameterSets(frame.Payload)
+	o.cacheH264ParameterSetsFromFrame(frame)
 	if shouldDrop, err := o.handleVideoDiscontinuityLocked(frame); err != nil {
 		o.stateMu.Lock()
 		o.DroppedVideoFrames++
@@ -374,7 +377,6 @@ func (o *hlsLiveAsync) handleVideoFrame(frame *shared.Frame) {
 		dts90k = 0
 	}
 	pts90k, dts90k = o.normalizeVideoTimestamps90k(pts90k, dts90k)
-
 	if frame.IsKeyFrame && o.currentSegmentHasTime && dts90k-o.currentSegmentStart90k >= durationTo90k(o.segmentDuration) {
 		if !o.shouldDelaySegmentRotationForAudioLocked(dts90k) {
 			if err := o.rotateSegmentLocked(frame.PTS, false); err != nil {
@@ -486,7 +488,11 @@ func (o *hlsLiveAsync) writeAudioFrame(frame *shared.Frame) error {
 	if err := o.currentSegmentWriter.WriteMPEG4Audio(o.audioTrack, pts90k, frame.Payload); err != nil {
 		return err
 	}
+	o.recordAudioWriteLocked(pts90k)
+	return nil
+}
 
+func (o *hlsLiveAsync) recordAudioWriteLocked(pts90k int64) {
 	o.stateMu.Lock()
 	o.TotalAudioFrames++
 	o.lastAudioWrite = time.Now()
@@ -502,7 +508,8 @@ func (o *hlsLiveAsync) writeAudioFrame(frame *shared.Frame) error {
 		o.currentSegmentLastPTS = ticks90kToDuration(pts90k)
 	}
 	o.currentSegmentHasAudio = true
-	return nil
+	o.hasLastAudioPTS90k = true
+	o.lastAudioPTS90k = pts90k
 }
 
 func (o *hlsLiveAsync) ensureSegmentLocked(pts time.Duration) error {
@@ -797,10 +804,23 @@ func (o *hlsLiveAsync) handleVideoDiscontinuityLocked(frame *shared.Frame) (bool
 		return false, nil
 	}
 
-	if !frame.Discontinuity {
+	isSwitchCandidate := frame.Discontinuity
+	if !isSwitchCandidate && o.pendingSwitchInputID != "" && inputID == o.pendingSwitchInputID && frame.IsKeyFrame {
+		// Retry a previously deferred switch on a later keyframe once configs
+		// are ready, even if the GOP rebaser no longer marks discontinuity.
+		isSwitchCandidate = true
+		frame.Discontinuity = true
+	}
+	if !isSwitchCandidate {
 		return inputID != o.currentSegmentInputID, nil
 	}
 
+	if !o.switchConfigReadyLocked(frame, inputID) {
+		o.pendingSwitchInputID = inputID
+		return true, nil
+	}
+
+	o.pendingSwitchInputID = ""
 	o.currentSegmentInputID = inputID
 	o.setActiveInputAudioRate(inputID)
 	if o.currentSegmentWriter == nil {
@@ -828,6 +848,29 @@ func (o *hlsLiveAsync) rememberInputAudioRate(inputID string, sampleRate int) {
 		o.inputAudioRates = make(map[string]int)
 	}
 	o.inputAudioRates[inputID] = sampleRate
+}
+
+func (o *hlsLiveAsync) switchConfigReadyLocked(frame *shared.Frame, inputID string) bool {
+	if frame == nil {
+		return false
+	}
+
+	// Compatibility guard: this destination writes H264+AAC MPEG-TS.
+	if frame.Codec != "h264" {
+		return false
+	}
+
+	// Require decodable keyframe configuration at switch boundary.
+	if frame.IsKeyFrame {
+		sps, pps := o.h264ParameterSetsForInput(inputID)
+		withCfg := h264EnsureSPSPPSOnKeyFrame(frame.Payload, true, sps, pps)
+		hasSPS, hasPPS := h264SPSPPSPresent(withCfg)
+		if !hasSPS || !hasPPS {
+			return false
+		}
+	}
+
+	return true
 }
 
 func (o *hlsLiveAsync) setActiveInputAudioRate(inputID string) {
@@ -973,7 +1016,7 @@ func (o *hlsLiveAsync) ensureSPSPPSOnKeyFrame(frame *shared.Frame) [][]byte {
 	if frame == nil || !frame.IsKeyFrame {
 		return frame.Payload
 	}
-	sps, pps := o.h264ParameterSets()
+	sps, pps := o.h264ParameterSetsForInput(strings.TrimSpace(frame.InputID))
 	return h264EnsureSPSPPSOnKeyFrame(frame.Payload, true, sps, pps)
 }
 
@@ -987,7 +1030,49 @@ func (o *hlsLiveAsync) cacheH264ParameterSets(nalus [][]byte) {
 	}
 }
 
-func (o *hlsLiveAsync) h264ParameterSets() ([]byte, []byte) {
+func (o *hlsLiveAsync) cacheH264ParameterSetsFromFrame(frame *shared.Frame) {
+	if frame == nil {
+		return
+	}
+	inputID := strings.TrimSpace(frame.InputID)
+	if inputID == "" {
+		return
+	}
+	if o.cachedSPSByInput == nil {
+		o.cachedSPSByInput = make(map[string][]byte)
+	}
+	if o.cachedPPSByInput == nil {
+		o.cachedPPSByInput = make(map[string][]byte)
+	}
+
+	sps := cloneBytes(frame.VideoSPS)
+	pps := cloneBytes(frame.VideoPPS)
+	if len(sps) == 0 || len(pps) == 0 {
+		extSPS, extPPS := h264ExtractSPSPPS(frame.Payload)
+		if len(sps) == 0 {
+			sps = extSPS
+		}
+		if len(pps) == 0 {
+			pps = extPPS
+		}
+	}
+	if len(sps) > 0 {
+		o.cachedSPS = sps
+		o.cachedSPSByInput[inputID] = sps
+	}
+	if len(pps) > 0 {
+		o.cachedPPS = pps
+		o.cachedPPSByInput[inputID] = pps
+	}
+}
+
+func (o *hlsLiveAsync) h264ParameterSetsForInput(inputID string) ([]byte, []byte) {
+	inputID = strings.TrimSpace(inputID)
+	if inputID != "" {
+		if sps := cloneBytes(o.cachedSPSByInput[inputID]); len(sps) > 0 {
+			return sps, cloneBytes(o.cachedPPSByInput[inputID])
+		}
+	}
 	return cloneBytes(o.cachedSPS), cloneBytes(o.cachedPPS)
 }
 
@@ -1002,5 +1087,7 @@ func cloneSharedFrame(frame *shared.Frame) *shared.Frame {
 			cloned.Payload = append(cloned.Payload, cloneBytes(nalu))
 		}
 	}
+	cloned.VideoSPS = cloneBytes(frame.VideoSPS)
+	cloned.VideoPPS = cloneBytes(frame.VideoPPS)
 	return &cloned
 }

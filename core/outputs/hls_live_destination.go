@@ -339,7 +339,7 @@ func (o *hlsLive) handleVideoFrame(frame *shared.Frame) {
 	o.writeMu.Lock()
 	defer o.writeMu.Unlock()
 
-	o.cacheH264ParameterSets(frame.InputID, frame.Payload)
+	o.cacheH264ParameterSetsFromFrame(frame)
 
 	dropFrame, err := o.handleVideoInputSwitchLocked(frame)
 	if err != nil {
@@ -870,6 +870,41 @@ func (o *hlsLive) cacheH264ParameterSets(inputID string, nalus [][]byte) {
 		o.cachedPPSByInput = make(map[string][]byte)
 	}
 	sps, pps := h264ExtractSPSPPS(nalus)
+	if len(sps) > 0 {
+		o.cachedSPSByInput[inputID] = sps
+	}
+	if len(pps) > 0 {
+		o.cachedPPSByInput[inputID] = pps
+	}
+}
+
+func (o *hlsLive) cacheH264ParameterSetsFromFrame(frame *shared.Frame) {
+	if frame == nil {
+		return
+	}
+
+	inputID := strings.TrimSpace(frame.InputID)
+	if inputID == "" {
+		return
+	}
+	if o.cachedSPSByInput == nil {
+		o.cachedSPSByInput = make(map[string][]byte)
+	}
+	if o.cachedPPSByInput == nil {
+		o.cachedPPSByInput = make(map[string][]byte)
+	}
+
+	sps := cloneBytes(frame.VideoSPS)
+	pps := cloneBytes(frame.VideoPPS)
+	if len(sps) == 0 || len(pps) == 0 {
+		extSPS, extPPS := h264ExtractSPSPPS(frame.Payload)
+		if len(sps) == 0 {
+			sps = extSPS
+		}
+		if len(pps) == 0 {
+			pps = extPPS
+		}
+	}
 	if len(sps) > 0 {
 		o.cachedSPSByInput[inputID] = sps
 	}

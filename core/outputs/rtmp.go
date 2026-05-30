@@ -478,6 +478,8 @@ func cloneFrame(f *shared.Frame) *shared.Frame {
 			out.Payload = append(out.Payload, append([]byte(nil), payload...))
 		}
 	}
+	out.VideoSPS = append([]byte(nil), f.VideoSPS...)
+	out.VideoPPS = append([]byte(nil), f.VideoPPS...)
 
 	return &out
 }
