@@ -96,7 +96,7 @@ func (m *stateMockStream) Clone() (Stream, error) {
 func (m *stateMockStream) WaitForStart(context.Context) error { return nil }
 
 func TestStreamer_StateLifecycle_MixedInputs(t *testing.T) {
-	streamer := corehelpers.NewStreamer(corehelpers.WithChannelID("state-ch"))
+	streamer := corehelpers.NewStreamer(corehelpers.WithStreamerID("state-ch"))
 	defer streamer.Close()
 	streamer.StartLife()
 
@@ -130,8 +130,8 @@ func TestStreamer_StateLifecycle_MixedInputs(t *testing.T) {
 		t.Fatalf("input count mismatch: got=%d want=%d", got, want)
 	}
 	assertStateHasInputIDs(t, state, []string{"hls", "hls-live", "rtmp-av", "rtmp-audio-less", "rtmp-video-less"})
-	assertURLListHasIDs(t, state.AvailableProgramHLSURLs, []string{"hls", "hls-live", "rtmp-av", "rtmp-audio-less", "rtmp-video-less"})
-	assertURLListHasIDs(t, state.ProgramRecordHLSURLs, []string{"hls", "hls-live", "rtmp-av", "rtmp-audio-less", "rtmp-video-less"})
+	assertURLListHasIDs(t, state.AvailableInputHLSURLs, []string{"hls", "hls-live", "rtmp-av", "rtmp-audio-less", "rtmp-video-less"})
+	assertURLListHasIDs(t, state.InputRecordHLSURLs, []string{"hls", "hls-live", "rtmp-av", "rtmp-audio-less", "rtmp-video-less"})
 
 	switchOrder := []string{"hls", "hls-live", "rtmp-av", "rtmp-audio-less", "rtmp-video-less"}
 	for _, inputID := range switchOrder {
@@ -160,8 +160,8 @@ func TestStreamer_StateLifecycle_MixedInputs(t *testing.T) {
 		remaining = removeIDFromList(remaining, removeID)
 		cur := streamer.State()
 		assertStateHasInputIDs(t, cur, remaining)
-		assertURLListHasIDs(t, cur.AvailableProgramHLSURLs, remaining)
-		assertURLListHasIDs(t, cur.ProgramRecordHLSURLs, remaining)
+		assertURLListHasIDs(t, cur.AvailableInputHLSURLs, remaining)
+		assertURLListHasIDs(t, cur.InputRecordHLSURLs, remaining)
 	}
 
 	final := streamer.State()
@@ -232,7 +232,7 @@ func TestStreamer_StateInputUpsertCases(t *testing.T) {
 }
 
 func TestStreamer_State_MultiInputsWithoutSwitch_ProgramURLsPresent(t *testing.T) {
-	streamer := corehelpers.NewStreamer(corehelpers.WithChannelID("state-no-switch"))
+	streamer := corehelpers.NewStreamer(corehelpers.WithStreamerID("state-no-switch"))
 	defer streamer.Close()
 	streamer.StartLife()
 
@@ -249,8 +249,35 @@ func TestStreamer_State_MultiInputsWithoutSwitch_ProgramURLsPresent(t *testing.T
 		t.Fatalf("expected CurrentInputID to stay empty when no switch happened, got %q", state.CurrentInputID)
 	}
 	assertStateHasInputIDs(t, state, inputIDs)
-	assertURLListHasIDs(t, state.AvailableProgramHLSURLs, inputIDs)
-	assertURLListHasIDs(t, state.ProgramRecordHLSURLs, inputIDs)
+	assertURLListHasIDs(t, state.AvailableInputHLSURLs, inputIDs)
+	assertURLListHasIDs(t, state.InputRecordHLSURLs, inputIDs)
+}
+
+func TestStreamer_UpdateStreams_RemovesDetachedInputFolders(t *testing.T) {
+	streamer := corehelpers.NewStreamer(corehelpers.WithStreamerID("state-update"))
+	defer streamer.Close()
+
+	inputA := newStateMockStream("input-a", "rtmp://source/live/input-a", "rtmp")
+	inputB := newStateMockStream("input-b", "rtmp://source/live/input-b", "rtmp")
+	if err := streamer.UpdateStreams([]Stream{inputA, inputB}, nil); err != nil {
+		t.Fatalf("UpdateStreams(add) error = %v", err)
+	}
+	configureStateTestFolders(t, streamer, inputA.GetID())
+	configureStateTestFolders(t, streamer, inputB.GetID())
+
+	initial := streamer.State()
+	assertURLListHasIDs(t, initial.AvailableInputHLSURLs, []string{"input-a", "input-b"})
+	assertURLListHasIDs(t, initial.InputRecordHLSURLs, []string{"input-a", "input-b"})
+
+	replacementA := newStateMockStream("input-a", "rtmp://source/live/input-a-2", "rtmp")
+	if err := streamer.UpdateStreams([]Stream{replacementA}, nil); err != nil {
+		t.Fatalf("UpdateStreams(remove input-b) error = %v", err)
+	}
+
+	state := streamer.State()
+	assertStateHasInputIDs(t, state, []string{"input-a"})
+	assertURLListHasIDs(t, state.AvailableInputHLSURLs, []string{"input-a"})
+	assertURLListHasIDs(t, state.InputRecordHLSURLs, []string{"input-a"})
 }
 
 func configureStateTestFolders(t *testing.T, streamer *corehelpers.Streamer, inputID string) {

@@ -30,10 +30,10 @@ type StreamerState struct {
 	StreamInputs  []*State `json:"inputs"`
 	StreamOutputs []*State `json:"outputs"`
 
-	AvailableProgramHLSURLs []string `json:"available_program_hls_urls"`
-	AvailableChannelHLSURLs []string `json:"available_channel_hls_urls"`
-	ProgramRecordHLSURLs    []string `json:"program_record_hls_urls"`
-	ChannelRecordHLSURLs    []string `json:"channel_record_hls_urls"`
+	AvailableInputHLSURLs  []string `json:"available_input_hls_urls"`
+	AvailableOutputHLSURLs []string `json:"available_output_hls_urls"`
+	InputRecordHLSURLs     []string `json:"input_record_hls_urls"`
+	OutputRecordHLSURLs    []string `json:"output_record_hls_urls"`
 }
 
 type HLSConfig struct {

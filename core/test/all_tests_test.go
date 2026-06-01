@@ -58,7 +58,7 @@ func TestAll(t *testing.T) {
 		runNamedTests(t, []namedTest{
 			{name: "RewriteHLSPlaylist_RewritesRelativeSegmentURI", fn: TestRewriteHLSPlaylist_RewritesRelativeSegmentURI},
 			{name: "RewriteHLSPlaylist_DoesNotRewriteAbsoluteSegmentURI", fn: TestRewriteHLSPlaylist_DoesNotRewriteAbsoluteSegmentURI},
-			{name: "RewriteHLSPlaylist_RewritesLegacyRootRelativeProgramURIToConfiguredPrefix", fn: TestRewriteHLSPlaylist_RewritesLegacyRootRelativeProgramURIToConfiguredPrefix},
+			{name: "RewriteHLSPlaylist_RewritesLegacyRootRelativeInputURIToConfiguredPrefix", fn: TestRewriteHLSPlaylist_RewritesLegacyRootRelativeInputURIToConfiguredPrefix},
 			{name: "JoinHLSPrefix_URLBase", fn: TestJoinHLSPrefix_URLBase},
 			{name: "StreamerUpdateStreams_ReplacesAndRemoves", fn: TestStreamer_UpdateStreams_ReplacesAndRemoves},
 			{name: "StreamerAddInputOutputAndSwitch", fn: TestStreamer_AddInputOutputAndSwitch},

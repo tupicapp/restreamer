@@ -4,48 +4,46 @@ import (
 	"strings"
 
 	"github.com/tupicapp/restreamer/core/logger"
-	shared "github.com/tupicapp/restreamer/core/shared"
 	"go.uber.org/zap"
 )
 
 type StreamerOption func(*Streamer)
 
-func WithChannelID(channelID string) StreamerOption {
+func WithStreamerID(streamerID string) StreamerOption {
 	return func(s *Streamer) {
-		s.channelID = strings.TrimSpace(channelID)
+		s.id = strings.TrimSpace(streamerID)
 	}
 }
 
-func WithChannelLiveFolder(folder any) StreamerOption {
+func WithOutputLiveFolder(folder any) StreamerOption {
 	return func(s *Streamer) {
-		adapted, err := shared.AdaptFolder(folder)
-		if err != nil {
-			logger.GetLogger().Warn("streamer: invalid channel live folder", zap.Error(err))
-			return
+		if err := s.hlsFolders.SetOutputLiveFolder(folder); err != nil {
+			logger.GetLogger().Warn("streamer: invalid output live folder", zap.Error(err))
 		}
-		s.channelLiveFolder = adapted
 	}
 }
 
-func WithChannelRecordFolder(folder any) StreamerOption {
+func WithOutputRecordFolder(folder any) StreamerOption {
 	return func(s *Streamer) {
-		adapted, err := shared.AdaptFolder(folder)
-		if err != nil {
-			logger.GetLogger().Warn("streamer: invalid channel record folder", zap.Error(err))
-			return
+		if err := s.hlsFolders.SetOutputRecordFolder(folder); err != nil {
+			logger.GetLogger().Warn("streamer: invalid output record folder", zap.Error(err))
 		}
-		s.channelRecordFolder = adapted
 	}
 }
 
-func WithRecordRootFolder(folder any) StreamerOption {
+func WithInputRecordRootFolder(folder any) StreamerOption {
 	return func(s *Streamer) {
-		adapted, err := shared.AdaptFolder(folder)
-		if err != nil {
-			logger.GetLogger().Warn("streamer: invalid record root folder", zap.Error(err))
-			return
+		if err := s.hlsFolders.SetInputRecordRootFolder(folder); err != nil {
+			logger.GetLogger().Warn("streamer: invalid input record root folder", zap.Error(err))
 		}
-		s.recordRootFolder = adapted
+	}
+}
+
+func WithOutputRecordRootFolder(folder any) StreamerOption {
+	return func(s *Streamer) {
+		if err := s.hlsFolders.SetOutputRecordRootFolder(folder); err != nil {
+			logger.GetLogger().Warn("streamer: invalid output record root folder", zap.Error(err))
+		}
 	}
 }
 

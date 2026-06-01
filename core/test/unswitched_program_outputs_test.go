@@ -14,7 +14,7 @@ import (
 	"github.com/tupicapp/restreamer/core/streamfactory"
 )
 
-func TestNoSwitchRTMPCompatibleInputsGenerateDecodableProgramLiveAndRecord(t *testing.T) {
+func TestNoSwitchRTMPCompatibleInputsGenerateDecodableInputLiveAndRecord(t *testing.T) {
 	requireBinary(t, "ffprobe")
 
 	inputs := []struct {
@@ -29,7 +29,7 @@ func TestNoSwitchRTMPCompatibleInputsGenerateDecodableProgramLiveAndRecord(t *te
 		requireRTMPPublishingOrSkip(t, in.url, 10*time.Second)
 	}
 
-	streamer := corehelpers.NewStreamer(corehelpers.WithChannelID("no-switch-program"))
+	streamer := corehelpers.NewStreamer(corehelpers.WithStreamerID("no-switch-program"))
 	defer streamer.Close()
 	streamer.StartLife()
 
@@ -88,14 +88,14 @@ func TestNoSwitchRTMPCompatibleInputsGenerateDecodableProgramLiveAndRecord(t *te
 		inputIDs = append(inputIDs, in.id)
 	}
 	slices.Sort(inputIDs)
-	waitForNoSwitchProgramURLs(t, streamer, inputIDs, 25*time.Second)
+	waitForNoSwitchInputURLs(t, streamer, inputIDs, 25*time.Second)
 
 	state := streamer.State()
 	if state.CurrentInputID != "" {
 		t.Fatalf("expected CurrentInputID to remain empty, got %q", state.CurrentInputID)
 	}
-	assertURLListHasIDs(t, state.AvailableProgramHLSURLs, inputIDs)
-	assertURLListHasIDs(t, state.ProgramRecordHLSURLs, inputIDs)
+	assertURLListHasIDs(t, state.AvailableInputHLSURLs, inputIDs)
+	assertURLListHasIDs(t, state.InputRecordHLSURLs, inputIDs)
 
 	for _, in := range artifacts {
 		waitForHLSArtifacts(t, in.liveDir, 25*time.Second, 2)
@@ -107,20 +107,20 @@ func TestNoSwitchRTMPCompatibleInputsGenerateDecodableProgramLiveAndRecord(t *te
 	}
 }
 
-func waitForNoSwitchProgramURLs(t *testing.T, streamer *corehelpers.Streamer, inputIDs []string, timeout time.Duration) {
+func waitForNoSwitchInputURLs(t *testing.T, streamer *corehelpers.Streamer, inputIDs []string, timeout time.Duration) {
 	t.Helper()
 
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		state := streamer.State()
-		if state.CurrentInputID == "" && len(state.AvailableProgramHLSURLs) == len(inputIDs) && len(state.ProgramRecordHLSURLs) == len(inputIDs) {
+		if state.CurrentInputID == "" && len(state.AvailableInputHLSURLs) == len(inputIDs) && len(state.InputRecordHLSURLs) == len(inputIDs) {
 			return
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 
 	state := streamer.State()
-	t.Fatalf("timed out waiting for no-switch program urls: current=%q live=%v record=%v", state.CurrentInputID, state.AvailableProgramHLSURLs, state.ProgramRecordHLSURLs)
+	t.Fatalf("timed out waiting for no-switch input urls: current=%q live=%v record=%v", state.CurrentInputID, state.AvailableInputHLSURLs, state.InputRecordHLSURLs)
 }
 
 func requireRTMPPublishingOrSkip(t *testing.T, rtmpURL string, timeout time.Duration) {
