@@ -1,6 +1,9 @@
 package streamfactory
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 func TestDetectInputKind(t *testing.T) {
 	tests := []struct {
@@ -41,5 +44,35 @@ func TestDetectOutputKind(t *testing.T) {
 				t.Fatalf("detectOutputKind(%q) = %q, want %q", tt.url, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestNewHLSOutput_PublicBaseURL_PopulatesStateURL(t *testing.T) {
+	outDir := t.TempDir()
+
+	stream, err := NewHLSOutput(
+		"hls-out",
+		filepath.Join(outDir, "stream.m3u8"),
+		HLSOutputOptions{PublicBaseURL: "https://cdn.example.com/live/output"},
+	)
+	if err != nil {
+		t.Fatalf("NewHLSOutput failed: %v", err)
+	}
+
+	state := stream.State()
+	if state.Url != "https://cdn.example.com/live/output/stream.m3u8" {
+		t.Fatalf("unexpected state url: %q", state.Url)
+	}
+	if state.LocalPath != outDir {
+		t.Fatalf("unexpected local path: %q", state.LocalPath)
+	}
+	if state.ServeType != "hls" {
+		t.Fatalf("unexpected serve type: %q", state.ServeType)
+	}
+	if state.ServeMode != "live" {
+		t.Fatalf("unexpected serve mode: %q", state.ServeMode)
+	}
+	if got := len(state.Served); got != 1 {
+		t.Fatalf("unexpected served count: got %d want 1", got)
 	}
 }

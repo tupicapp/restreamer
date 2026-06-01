@@ -496,7 +496,6 @@ func firstPacketPTSSeconds(t *testing.T, segmentPath string) float64 {
 	return 0
 }
 
-
 func TestHLSDestination_RecordMode_KeepsAllEntriesInPlaylist(t *testing.T) {
 	outDir := t.TempDir()
 	outFolderRaw := storage.NewLocal(&config.Config{
@@ -1084,9 +1083,7 @@ func TestDurationTo90k_UsesExactIntegerMath(t *testing.T) {
 
 func TestHLSFileDestination_PlaylistTargetDurationReflectsSegments(t *testing.T) {
 	outDir := t.TempDir()
-	outFolderRaw := storage.NewLocal(&config.Config{
-		Storage: config.Storage{RecordingsRoot: outDir},
-	}).RecordingsRoot()
+	outFolderRaw := storage.NewFolder(outDir, storage.WithPublicBaseURL("https://live-play.tupic.com/v1/restream/hls/channel-a/program-a"))
 	outFolder, err := shared.AdaptFolder(outFolderRaw)
 	if err != nil {
 		t.Fatalf("AdaptFolder failed: %v", err)
@@ -1095,7 +1092,6 @@ func TestHLSFileDestination_PlaylistTargetDurationReflectsSegments(t *testing.T)
 		url:            outDir,
 		outputFolder:   outFolder,
 		targetDuration: 2,
-		pathPrefix:     "/v1/restream/hls/channel-a/program-a",
 		entries: []hlsSegmentEntry{
 			{Seq: 5, FileName: "seg_000005.ts", Duration: 16.391},
 			{Seq: 6, FileName: "seg_000006.ts", Duration: 15.248},
@@ -1131,13 +1127,13 @@ func TestHLSFileDestination_PlaylistTargetDurationReflectsSegments(t *testing.T)
 	if strings.Contains(string(data), "#EXT-X-DISCONTINUITY") {
 		t.Fatalf("contiguous segments (seq 5,6) must NOT have #EXT-X-DISCONTINUITY")
 	}
-	wantFirst := "/v1/restream/hls/channel-a/program-a/seg_000005.ts"
-	wantSecond := "/v1/restream/hls/channel-a/program-a/seg_000006.ts"
+	wantFirst := "seg_000005.ts"
+	wantSecond := "seg_000006.ts"
 	if !strings.Contains(string(data), wantFirst) {
-		t.Fatalf("expected storage-backed segment URI %q, got: %s", wantFirst, string(data))
+		t.Fatalf("expected relative segment URI %q, got: %s", wantFirst, string(data))
 	}
 	if !strings.Contains(string(data), wantSecond) {
-		t.Fatalf("expected storage-backed segment URI %q, got: %s", wantSecond, string(data))
+		t.Fatalf("expected relative segment URI %q, got: %s", wantSecond, string(data))
 	}
 }
 
@@ -1282,13 +1278,13 @@ func TestHLSDestination_InputSwitch_RotatesAtNextKeyframeAndDropsUntilThen(t *te
 	}
 
 	dest.handleVideoFrame(&shared.Frame{
-		InputID:    "input-b",
-		Codec:      "h264",
-		IsKeyFrame: true,
+		InputID:       "input-b",
+		Codec:         "h264",
+		IsKeyFrame:    true,
 		Discontinuity: true,
-		PTS:        1500 * time.Millisecond,
-		DTS:        1500 * time.Millisecond,
-		Payload:    [][]byte{{0x67, 0x4d, 0x00, 0x1f}, {0x68, 0xee, 0x3c, 0x80}, {0x65, 0x88, 0x84}},
+		PTS:           1500 * time.Millisecond,
+		DTS:           1500 * time.Millisecond,
+		Payload:       [][]byte{{0x67, 0x4d, 0x00, 0x1f}, {0x68, 0xee, 0x3c, 0x80}, {0x65, 0x88, 0x84}},
 	})
 
 	if dest.currentSegmentInputID != "input-b" {
@@ -1424,9 +1420,7 @@ func TestHLSDestination_ShouldDelaySegmentRotationForAudioAfterDiscontinuity(t *
 
 func TestHLSFileDestination_EmitsAbsoluteURLsInSegmentAndPlaylistEvents(t *testing.T) {
 	outDir := t.TempDir()
-	outFolderRaw := storage.NewLocal(&config.Config{
-		Storage: config.Storage{RecordingsRoot: outDir},
-	}).RecordingsRoot()
+	outFolderRaw := storage.NewFolder(outDir, storage.WithPublicBaseURL("https://live-play.tupic.com/v1/restream/hls/channel-a/program-a"))
 	outFolder, err := shared.AdaptFolder(outFolderRaw)
 	if err != nil {
 		t.Fatalf("AdaptFolder failed: %v", err)
@@ -1437,7 +1431,6 @@ func TestHLSFileDestination_EmitsAbsoluteURLsInSegmentAndPlaylistEvents(t *testi
 		segmentDuration: time.Second,
 		playlistSize:    3,
 		targetDuration:  2,
-		pathPrefix:      "https://live-play.tupic.com/v1/restream/hls/channel-a/program-a",
 		events:          shared.NewEventEmitter(32),
 	}
 
@@ -1476,6 +1469,31 @@ func TestHLSFileDestination_EmitsAbsoluteURLsInSegmentAndPlaylistEvents(t *testi
 	}
 	if segMeta.PlaylistURL != "https://live-play.tupic.com/v1/restream/hls/channel-a/program-a/stream.m3u8" {
 		t.Fatalf("expected fully qualified playlist URL, got %q", segMeta.PlaylistURL)
+	}
+}
+
+func TestHLSFileDestination_ServerStateUsesFolderBaseURL(t *testing.T) {
+	outDir := t.TempDir()
+	stream, err := NewHLSLiveDestination(
+		"hls-server-state",
+		storage.NewFolder(outDir, storage.WithPublicBaseURL("https://live-play.tupic.com/v1/restream/hls/channel-a/program-a")),
+	)
+	if err != nil {
+		t.Fatalf("NewHLSLiveDestination failed: %v", err)
+	}
+
+	state := stream.State()
+	if state.Url != "https://live-play.tupic.com/v1/restream/hls/channel-a/program-a/stream.m3u8" {
+		t.Fatalf("unexpected state url: %q", state.Url)
+	}
+	if state.LocalPath != outDir {
+		t.Fatalf("unexpected local path: got %q want %q", state.LocalPath, outDir)
+	}
+	if state.ServeType != "hls" {
+		t.Fatalf("unexpected serve type: %q", state.ServeType)
+	}
+	if state.ServeMode != "live" {
+		t.Fatalf("unexpected serve mode: %q", state.ServeMode)
 	}
 }
 

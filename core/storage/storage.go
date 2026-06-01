@@ -6,9 +6,11 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/tupicapp/restreamer/core/config"
+	"github.com/tupicapp/restreamer/core/shared"
 )
 
 type Local struct {
@@ -21,8 +23,22 @@ func NewLocal(cfg *config.Config) *Local {
 	}
 }
 
-func NewFolder(path string) *Folder {
-	return &Folder{basePath: path}
+type FolderOption func(*Folder)
+
+func WithPublicBaseURL(baseURL string) FolderOption {
+	return func(f *Folder) {
+		f.publicBaseURL = strings.TrimSpace(strings.TrimRight(baseURL, "/"))
+	}
+}
+
+func NewFolder(path string, opts ...FolderOption) *Folder {
+	folder := &Folder{basePath: path}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(folder)
+		}
+	}
+	return folder
 }
 
 func (l *Local) RecordingsRoot() *Folder {
@@ -32,13 +48,20 @@ func (l *Local) RecordingsRoot() *Folder {
 }
 
 type Folder struct {
-	basePath string
+	basePath      string
+	publicBaseURL string
 }
 
 func (f *Folder) Folder(path string) *Folder {
-	return &Folder{
+	child := &Folder{
 		basePath: filepath.Join(f.basePath, path),
 	}
+	if trimmed := strings.TrimSpace(path); trimmed != "" && f.publicBaseURL != "" {
+		child.publicBaseURL = shared.JoinURLPrefix(f.publicBaseURL, filepath.ToSlash(trimmed))
+	} else {
+		child.publicBaseURL = f.publicBaseURL
+	}
+	return child
 }
 
 func (f *Folder) Open(path string) (io.ReadCloser, error) {
@@ -112,6 +135,9 @@ func (f *Folder) Clean(formerThan time.Time, limit int64) (removed int64, err er
 		if entry.IsDir() {
 			continue
 		}
+		if shouldPreserveDuringClean(entry.Name()) {
+			continue
+		}
 		info, err := entry.Info()
 		if err != nil {
 			continue
@@ -129,11 +155,23 @@ func (f *Folder) Clean(formerThan time.Time, limit int64) (removed int64, err er
 	return removed, nil
 }
 
+func shouldPreserveDuringClean(name string) bool {
+	ext := strings.ToLower(strings.TrimSpace(filepath.Ext(name)))
+	return ext == ".m3u8"
+}
+
 func (f *Folder) ObjectURL(path string) (string, error) {
+	if f.publicBaseURL != "" {
+		return shared.JoinURLPrefix(f.publicBaseURL, filepath.ToSlash(strings.TrimSpace(path))), nil
+	}
 	fullPath := filepath.Join(f.basePath, path)
 	absPath, err := filepath.Abs(fullPath)
 	if err != nil {
 		return "", err
 	}
 	return "file://" + filepath.ToSlash(absPath), nil
+}
+
+func (f *Folder) LocalPath() string {
+	return f.basePath
 }

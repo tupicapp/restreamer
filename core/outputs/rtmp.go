@@ -21,6 +21,12 @@ type RtmpWriter interface {
 	Write(f *shared.Frame) error
 }
 
+type RtmpWriterOption func(*rtmpWriter)
+
+func WithRtmpSidecars(sidecars ...shared.Stream) RtmpWriterOption {
+	return func(w *rtmpWriter) {}
+}
+
 type rtmpLibWriter struct {
 	libWriter  *gortmplib.Writer
 	videoTrack *gortmplib.Track
@@ -76,7 +82,7 @@ type rtmpWriter struct {
 	events       *shared.EventEmitter
 }
 
-func NewRtmpWriter(id, url string) (shared.Stream, error) {
+func NewRtmpWriter(id, url string, opts ...RtmpWriterOption) (shared.Stream, error) {
 	ps := &rtmpWriter{
 		id:        id,
 		url:       addDefaultRTMPPort(url),
@@ -86,6 +92,11 @@ func NewRtmpWriter(id, url string) (shared.Stream, error) {
 		events:    shared.NewEventEmitter(128),
 	}
 	ps.initFn = ps.newLibWriter
+	for _, opt := range opts {
+		if opt != nil {
+			opt(ps)
+		}
+	}
 
 	// initialize the RTMP writer
 	return ps, nil
@@ -146,10 +157,11 @@ func (s *rtmpWriter) GetAudioChan() chan *shared.Frame {
 	return s.gopBuffer.AudioFrameChan
 }
 
-func (s *rtmpWriter) Type() string             { return "writer" }
-func (s *rtmpWriter) AudioLock() *sync.RWMutex { return &s.audioMu }
-func (s *rtmpWriter) VideoLock() *sync.RWMutex { return &s.videoMu }
-func (s *rtmpWriter) IsRestartable() bool      { return true }
+func (s *rtmpWriter) Type() string                          { return "writer" }
+func (s *rtmpWriter) AddSidecars(sidecars ...shared.Stream) {}
+func (s *rtmpWriter) AudioLock() *sync.RWMutex              { return &s.audioMu }
+func (s *rtmpWriter) VideoLock() *sync.RWMutex              { return &s.videoMu }
+func (s *rtmpWriter) IsRestartable() bool                   { return true }
 func (s *rtmpWriter) State() *shared.State {
 	return &shared.State{
 		LastIO:             s.lastIO,
@@ -254,7 +266,6 @@ func (s *rtmpWriter) consumeVideoReady() {
 			if f == nil {
 				continue
 			}
-
 			if err := s.WriteH264(f); err != nil {
 				s.DroppedVideoFrames++
 				getLogger().Error("rtmp destination: dropped video frame (ring full)",
@@ -280,7 +291,6 @@ func (s *rtmpWriter) consumeAudioReady() {
 			if f == nil {
 				continue
 			}
-
 			// fmt.Println("getting audio ", f.PTS)
 
 			if err := s.WriteMpeg4Audio(f); err != nil {

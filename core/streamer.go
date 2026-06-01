@@ -1,6 +1,9 @@
 package irajstreamer
 
 import (
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 
@@ -20,10 +23,6 @@ type Streamer struct {
 	MultiCaster   MultiCaster
 	stagedInputID string
 	id            string
-
-	hlsFolders     *shared.HLSFolders
-	hlsConfig      HLSConfig
-	recorderConfig RecorderConfig
 
 	events   *shared.EventEmitter
 	listener EventListener
@@ -46,7 +45,6 @@ func NewStreamer(opts ...StreamerOption) *Streamer {
 		done:        make(chan struct{}),
 		SwitchChan:  make(chan string, 10),
 		MultiCaster: multicaster,
-		hlsFolders:  shared.NewHLSFolders(),
 		events:      shared.NewEventEmitter(256),
 	}
 	for _, opt := range opts {
@@ -56,14 +54,6 @@ func NewStreamer(opts ...StreamerOption) *Streamer {
 	}
 	multicaster.SetStreamer(streamer)
 	return streamer
-}
-
-func (s *Streamer) hlsPlaylistName() string {
-	name := strings.TrimSpace(s.hlsConfig.PlaylistName)
-	if name == "" {
-		return "stream.m3u8"
-	}
-	return name
 }
 
 func (s *Streamer) Close() {
@@ -144,4 +134,24 @@ func (s *Streamer) shouldStartInputLocked(stream Stream, inputID string) bool {
 		return true
 	}
 	return inputID == s.activeInputID || inputID == s.stagedInputID
+}
+
+func shouldPauseWhenInactive(stream Stream) bool {
+	if stream == nil {
+		return false
+	}
+	capable, ok := stream.(pauseWhenInactiveCapable)
+	return ok && capable.ShouldPauseWhenInactive()
+}
+
+func hashStruct(v any) (string, error) {
+	// Convert struct to a deterministic JSON representation
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "", err
+	}
+
+	// Compute hash
+	h := sha256.Sum256(b)
+	return fmt.Sprintf("%x", h[:]), nil
 }

@@ -71,7 +71,6 @@ type hlsLive struct {
 	segmentDuration time.Duration
 	playlistSize    int
 	targetDuration  int
-	pathPrefix      string
 
 	segmentIndex int
 	entries      []hlsSegmentEntry
@@ -164,21 +163,8 @@ func WithHLSCleanInterval(d time.Duration) HLSLiveOption {
 	}
 }
 
-func WithHLSPlaylistPathPrefix(prefix string) HLSLiveOption {
-	return func(o *hlsLive) {
-		prefix = strings.TrimSpace(prefix)
-		if prefix == "" {
-			return
-		}
-		if strings.HasPrefix(prefix, "http://") || strings.HasPrefix(prefix, "https://") {
-			o.pathPrefix = strings.TrimRight(prefix, "/")
-			return
-		}
-		if !strings.HasPrefix(prefix, "/") {
-			prefix = "/" + prefix
-		}
-		o.pathPrefix = strings.TrimRight(prefix, "/")
-	}
+func WithHLSSidecars(sidecars ...shared.Stream) HLSLiveOption {
+	return func(o *hlsLive) {}
 }
 
 func NewHLSLiveDestination(id string, outputFolder any, opts ...HLSLiveOption) (shared.Stream, error) {
@@ -219,7 +205,7 @@ func (o *hlsLive) EventChan() chan shared.Event {
 func (o *hlsLive) Start() {
 	if o.isInitiated {
 		o.isStarted = true
-		o.events.Emit(shared.Event{Type: shared.EventTypeStreamStarted, StreamID: o.id, StreamType: o.Type(), Message: "hls destination resumed", Meta: shared.StreamLifecycleMeta{URL: o.url}})
+		o.events.Emit(shared.Event{Type: shared.EventTypeStreamStarted, StreamID: o.id, StreamType: o.Type(), Message: "hls destination resumed", Meta: shared.StreamLifecycleMeta{URL: o.playlistURL()}})
 		return
 	}
 
@@ -227,7 +213,7 @@ func (o *hlsLive) Start() {
 	o.isStarted = true
 
 	if err := o.outputFolder.RemoveAll(); err != nil {
-		getLogger().Error("hls destination remove dir failed", zap.String("path", o.url), zap.Error(err))
+		getLogger().Error("hls destination remove dir failed", zap.String("path", o.localPath()), zap.Error(err))
 		return
 	}
 
@@ -239,7 +225,7 @@ func (o *hlsLive) Start() {
 	}
 
 	close(o.Started)
-	o.events.Emit(shared.Event{Type: shared.EventTypeStreamStarted, StreamID: o.id, StreamType: o.Type(), Message: "hls destination started", Meta: shared.StreamLifecycleMeta{URL: o.url}})
+	o.events.Emit(shared.Event{Type: shared.EventTypeStreamStarted, StreamID: o.id, StreamType: o.Type(), Message: "hls destination started", Meta: shared.StreamLifecycleMeta{URL: o.playlistURL()}})
 
 	go o.run()
 	go o.gopBuffer.Run()
@@ -272,10 +258,20 @@ func (o *hlsLive) State() *shared.State {
 	}
 
 	return &shared.State{
-		IsStarted:          o.isStarted,
-		LastIO:             lastIO,
-		StreamID:           o.id,
-		Url:                o.url,
+		IsStarted: o.isStarted,
+		LastIO:    lastIO,
+		StreamID:  o.id,
+		Url:       o.playlistURL(),
+		LocalPath: o.localPath(),
+		ServeType: "hls",
+		ServeMode: "live",
+		Served: []shared.ServedState{{
+			StreamID:  o.id,
+			Url:       o.playlistURL(),
+			LocalPath: o.localPath(),
+			ServeType: "hls",
+			ServeMode: "live",
+		}},
 		Type:               o.Type(),
 		TotalVideoFrames:   o.TotalVideoFrames,
 		TotalAudioFrames:   o.TotalAudioFrames,
@@ -666,9 +662,9 @@ func (o *hlsLive) closeCurrentSegmentLocked(endList bool) error {
 		Meta: shared.SegmentGeneratedMeta{
 			Sequence:        o.segmentIndex - 1,
 			FileName:        o.currentSegmentFileName,
-			SegmentURL:      o.eventObjectURLOrPath(o.currentSegmentFileName),
+			SegmentURL:      o.objectURL(o.currentSegmentFileName),
 			PlaylistName:    "stream.m3u8",
-			PlaylistURL:     o.eventObjectURLOrPath("stream.m3u8"),
+			PlaylistURL:     o.playlistURL(),
 			DurationSeconds: duration,
 		},
 	})
@@ -733,7 +729,7 @@ func (o *hlsLive) writePlaylistLocked(endList bool) error {
 		}
 		prevSeq = entry.Seq
 		b.WriteString(fmt.Sprintf("#EXTINF:%.3f,\n", entry.Duration))
-		b.WriteString(o.objectURLOrPath(entry.FileName) + "\n")
+		b.WriteString(entry.FileName + "\n")
 	}
 
 	if endList {
@@ -744,19 +740,20 @@ func (o *hlsLive) writePlaylistLocked(endList bool) error {
 	return shared.WriteFileAtomic(o.outputFolder, "stream.m3u8", []byte(playlist))
 }
 
-func (o *hlsLive) segmentURI(fileName string) string {
-	return shared.JoinURLPrefix(o.pathPrefix, strings.TrimLeft(fileName, "/"))
+func (o *hlsLive) objectURL(fileName string) string {
+	return shared.PreferredURL("", o.outputFolder, fileName)
 }
 
-func (o *hlsLive) objectURLOrPath(fileName string) string {
-	if o.pathPrefix != "" {
-		return shared.JoinURLPrefix(o.pathPrefix, fileName)
+func (o *hlsLive) playlistURL() string {
+	return o.objectURL("stream.m3u8")
+}
+
+func (o *hlsLive) localPath() string {
+	path, err := shared.ResolveLocalPath(o.outputFolder)
+	if err != nil {
+		return ""
 	}
-	return fileName
-}
-
-func (o *hlsLive) eventObjectURLOrPath(fileName string) string {
-	return o.objectURLOrPath(fileName)
+	return path
 }
 
 func durationTo90k(d time.Duration) int64 {

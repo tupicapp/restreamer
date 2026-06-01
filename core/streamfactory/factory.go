@@ -9,6 +9,7 @@ import (
 	core "github.com/tupicapp/restreamer/core"
 	"github.com/tupicapp/restreamer/core/inputs"
 	"github.com/tupicapp/restreamer/core/outputs"
+	"github.com/tupicapp/restreamer/core/shared"
 	"github.com/tupicapp/restreamer/core/storage"
 )
 
@@ -23,30 +24,75 @@ const (
 	streamKindRTSP    streamKind = "rtsp"
 )
 
-func NewInput(id, streamURL string) (core.Stream, error) {
-	switch detectInputKind(streamURL) {
-	case streamKindRTMP:
-		return inputs.NewCompatibleInput(inputs.NewRTMP(id, streamURL),
-			inputs.WithCompatRuntimeDetection(false)), nil
-	case streamKindFile, streamKindHLSLive:
-		// Probe the playlist: #EXT-X-ENDLIST → VOD/file, absent → live.
-		// OptionWithRealTime applies only to the VOD path (hlsInput).
-		return inputs.NewHLSAuto(id, streamURL, inputs.OptionWithRealTime(true))
-	default:
-		return inputs.NewCompatibleInput(inputs.NewRTMP(id, streamURL),
-			inputs.WithCompatRuntimeDetection(false)), nil
+type StreamOptions struct {
+	Sidecars []shared.Stream
+}
+
+type StreamOption func(*StreamOptions)
+
+func WithStreamServer(streamServer shared.Stream) StreamOption {
+	return func(opts *StreamOptions) {
+		if streamServer != nil {
+			opts.Sidecars = append(opts.Sidecars, streamServer)
+		}
 	}
 }
 
-func NewOutput(id, streamURL string) (core.Stream, error) {
+func NewInput(id, streamURL string, opts ...StreamOption) (core.Stream, error) {
+	cfg := buildStreamOptions(opts...)
+
+	var stream core.Stream
+	switch detectInputKind(streamURL) {
+	case streamKindRTMP:
+		stream = inputs.NewCompatibleInput(inputs.NewRTMP(id, streamURL),
+			inputs.WithCompatRuntimeDetection(false),
+			inputs.WithCompatSidecars(cfg.Sidecars...))
+	case streamKindFile, streamKindHLSLive:
+		// Probe the playlist: #EXT-X-ENDLIST → VOD/file, absent → live.
+		// OptionWithRealTime applies only to the VOD path (hlsInput).
+		var err error
+		stream, err = inputs.NewHLSAuto(id, streamURL, cfg.Sidecars, inputs.OptionWithRealTime(true))
+		if err != nil {
+			return nil, err
+		}
+	default:
+		stream = inputs.NewCompatibleInput(inputs.NewRTMP(id, streamURL),
+			inputs.WithCompatRuntimeDetection(false),
+			inputs.WithCompatSidecars(cfg.Sidecars...))
+	}
+
+	return stream, nil
+}
+
+func NewOutput(id, streamURL string, opts ...StreamOption) (core.Stream, error) {
+	cfg := buildStreamOptions(opts...)
+
+	var stream core.Stream
 	switch detectOutputKind(streamURL) {
 	case streamKindRTMP:
-		return outputs.NewRtmpWriter(id, streamURL)
+		var err error
+		stream, err = outputs.NewRtmpWriter(id, streamURL, outputs.WithRtmpSidecars(cfg.Sidecars...))
+		if err != nil {
+			return nil, err
+		}
 	case streamKindYouTube:
-		return outputs.NewRtmpYouTubeOutput(id, streamURL)
+		if len(cfg.Sidecars) > 0 {
+			return nil, fmt.Errorf("youtube output does not support sidecars")
+		}
+		var err error
+		stream, err = outputs.NewRtmpYouTubeOutput(id, streamURL)
+		if err != nil {
+			return nil, err
+		}
 	default:
-		return outputs.NewRtmpWriter(id, streamURL)
+		var err error
+		stream, err = outputs.NewRtmpWriter(id, streamURL, outputs.WithRtmpSidecars(cfg.Sidecars...))
+		if err != nil {
+			return nil, err
+		}
 	}
+
+	return stream, nil
 }
 
 // HLSOutputOptions configures an HLS output destination.
@@ -67,6 +113,10 @@ type HLSOutputOptions struct {
 	// Zero disables automatic cleanup (only the sliding window trims playlist entries;
 	// TS files on disk must be cleaned manually).
 	CleanInterval time.Duration
+
+	// PublicBaseURL is the externally callable base URL for the written HLS tree.
+	// When set, State().Url points to PublicBaseURL + "/stream.m3u8".
+	PublicBaseURL string
 }
 
 // NewHLSOutput creates an HLS output that writes MPEG-TS segments and an M3U8
@@ -75,7 +125,9 @@ type HLSOutputOptions struct {
 // outputPath may be:
 //   - a directory: /tmp/stream/         → segments written there
 //   - an m3u8 file path: /tmp/stream/stream.m3u8 → parent dir used
-func NewHLSOutput(id, outputPath string, opts HLSOutputOptions) (core.Stream, error) {
+func NewHLSOutput(id, outputPath string, opts HLSOutputOptions, streamOpts ...StreamOption) (core.Stream, error) {
+	cfg := buildStreamOptions(streamOpts...)
+
 	abs, err := filepath.Abs(outputPath)
 	if err != nil {
 		return nil, fmt.Errorf("resolve hls output path %q: %w", outputPath, err)
@@ -101,8 +153,21 @@ func NewHLSOutput(id, outputPath string, opts HLSOutputOptions) (core.Stream, er
 		}
 		hlsOpts = append(hlsOpts, outputs.WithHLSCleanInterval(cleanInterval))
 	}
+	if len(cfg.Sidecars) > 0 {
+		hlsOpts = append(hlsOpts, outputs.WithHLSSidecars(cfg.Sidecars...))
+	}
 
-	return outputs.NewHLSLiveDestination(id, storage.NewFolder(dir), hlsOpts...)
+	folderOpts := make([]storage.FolderOption, 0, 1)
+	if baseURL := strings.TrimSpace(opts.PublicBaseURL); baseURL != "" {
+		folderOpts = append(folderOpts, storage.WithPublicBaseURL(baseURL))
+	}
+
+	stream, err := outputs.NewHLSLiveDestination(id, storage.NewFolder(dir, folderOpts...), hlsOpts...)
+	if err != nil {
+		return nil, err
+	}
+
+	return stream, nil
 }
 
 // IsHLSOutputPath reports whether the given URL/path should be treated as an
@@ -158,4 +223,14 @@ func detectOutputKind(streamURL string) streamKind {
 		}
 		return streamKindRTMP
 	}
+}
+
+func buildStreamOptions(opts ...StreamOption) StreamOptions {
+	cfg := StreamOptions{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&cfg)
+		}
+	}
+	return cfg
 }

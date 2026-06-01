@@ -63,17 +63,17 @@ func probeIsLive(baseURI string, data []byte) (bool, error) {
 //   - NewHLSLive (live mode) when #EXT-X-ENDLIST is absent
 //
 // opts are forwarded to NewHLS and have no effect on NewHLSLive.
-func NewHLSAuto(id, uri string, opts ...HlsOption) (Stream, error) {
+func NewHLSAuto(id, uri string, sidecars []Stream, opts ...HlsOption) (Stream, error) {
 	isLive, err := ProbeHLSLive(uri)
 	if err != nil {
 		return nil, fmt.Errorf("hls auto detect %q: %w", uri, err)
 	}
 
 	if isLive {
-		return NewHLSLive(id, uri), nil
+		return NewHLSLive(id, uri, OptionLiveWithSidecars(sidecars...)), nil
 	}
 
-	s := NewHLS(id, uri, opts...)
+	s := NewHLS(id, uri, append(opts, OptionWithSidecars(sidecars...))...)
 	if s == nil {
 		return nil, fmt.Errorf("hls auto: failed to create file reader for %q", uri)
 	}

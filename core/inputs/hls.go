@@ -33,8 +33,9 @@ const (
 )
 
 type hlsInput struct {
-	id  string
-	uri string
+	id       string
+	uri      string
+	sidecars []shared.Stream
 
 	videoChan chan *Frame
 	audioChan chan *Frame
@@ -90,6 +91,12 @@ func OptionWithRealTime(realTime bool) HlsOption {
 	return func(h *hlsInput) { h.realTime = realTime }
 }
 
+func OptionWithSidecars(sidecars ...shared.Stream) HlsOption {
+	return func(h *hlsInput) {
+		h.sidecars = append(h.sidecars, sidecars...)
+	}
+}
+
 // NewHLS returns a Stream implementation that reads from an HLS playlist.
 func NewHLS(id, uri string, opts ...HlsOption) Stream {
 	// Pending channels should be larger to buffer frames before sending to output
@@ -134,11 +141,15 @@ func (r *hlsInput) ShouldPauseWhenInactive() bool  { return true }
 func (r *hlsInput) GetAudioChan() chan *Frame { return r.audioChan }
 func (r *hlsInput) GetID() string             { return r.id }
 func (r *hlsInput) Type() string              { return "reader" }
-func (r *hlsInput) AudioLock() *sync.RWMutex  { return &r.audioMu }
-func (r *hlsInput) VideoLock() *sync.RWMutex  { return &r.videoMu }
-func (r *hlsInput) IsRestartable() bool       { return false }
+func (r *hlsInput) AddSidecars(sidecars ...shared.Stream) {
+	r.sidecars = append(r.sidecars, sidecars...)
+}
+func (r *hlsInput) AudioLock() *sync.RWMutex { return &r.audioMu }
+func (r *hlsInput) VideoLock() *sync.RWMutex { return &r.videoMu }
+func (r *hlsInput) IsRestartable() bool      { return false }
 func (r *hlsInput) Stop() {
 	r.IsStarted = false
+	shared.StopSidecars(r.sidecars)
 	r.events.Emit(shared.Event{Type: shared.EventTypeStreamStopped, StreamID: r.id, StreamType: r.Type(), Message: "hls reader stopped"})
 }
 func (r *hlsInput) Close() {
@@ -164,6 +175,7 @@ func (r *hlsInput) Close() {
 		}
 
 		close(r.done)
+		shared.CloseSidecars(r.sidecars)
 		r.events.Emit(shared.Event{Type: shared.EventTypeStreamClosed, StreamID: r.id, StreamType: r.Type(), Message: "hls reader closed"})
 		r.events.Close()
 	})
@@ -179,7 +191,7 @@ func (r *hlsInput) EventChan() chan shared.Event {
 }
 
 func (r *hlsInput) State() *State {
-	return &State{
+	return shared.MergeServedState(&State{
 		LastIO:             r.LastIO,
 		IsStarted:          r.IsStarted,
 		StreamID:           r.id,
@@ -189,11 +201,15 @@ func (r *hlsInput) State() *State {
 		DroppedVideoFrames: float64(r.DroppedVideoFrames),
 		TotalVideoFrames:   r.TotalVideoFrames,
 		TotalAudioFrames:   r.TotalAudioFrames,
-	}
+	}, r.sidecars)
 }
 
 func (r *hlsInput) Clone() (Stream, error) {
-	return NewHLS(r.id, r.uri), nil
+	clonedSidecars, err := shared.CloneStreams(r.sidecars)
+	if err != nil {
+		return nil, err
+	}
+	return NewHLS(r.id, r.uri, OptionWithSidecars(clonedSidecars...)), nil
 }
 
 func (r *hlsInput) WaitForStart(ctx context.Context) error {
@@ -215,12 +231,14 @@ func (r *hlsInput) WaitForStart(ctx context.Context) error {
 func (r *hlsInput) Start() {
 	if r.IsInitiated {
 		r.IsStarted = true
+		shared.StartSidecars(r.sidecars)
 		r.events.Emit(shared.Event{Type: shared.EventTypeStreamStarted, StreamID: r.id, StreamType: r.Type(), Message: "hls reader resumed", Meta: shared.StreamLifecycleMeta{URL: r.uri}})
 		return
 	}
 
 	r.IsInitiated = true
 	r.IsStarted = true
+	shared.StartSidecars(r.sidecars)
 	r.RunnerDetails = "hls reader loop"
 
 	getLogger().Debug("hls reader: started", zap.String("stream_id", r.id), zap.String("uri", r.uri))
@@ -467,6 +485,7 @@ func (r *hlsInput) drainAndForwardVideo() {
 		}
 
 		for _, frame := range videoBuffer {
+			shared.PushToSidecars(r.sidecars, frame, true)
 			select {
 			case r.videoChan <- frame:
 				if r.realTime {
@@ -499,6 +518,7 @@ func (r *hlsInput) drainAndForwardAudio() {
 		}
 
 		for _, frame := range audioBuffer {
+			shared.PushToSidecars(r.sidecars, frame, false)
 			select {
 			case r.audioChan <- frame:
 				if r.realTime {

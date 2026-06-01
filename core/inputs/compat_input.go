@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	shared "github.com/tupicapp/restreamer/core/shared"
 )
 
 const (
@@ -11,6 +13,7 @@ const (
 	defaultCompatVideoTimeout  = 250 * time.Millisecond
 	defaultCompatAudioInterval = time.Duration(1024) * time.Second / DefaultAudioRate
 	defaultCompatVideoInterval = 33 * time.Millisecond
+	compatMainPathWriteTimeout = 10 * time.Millisecond
 )
 
 var defaultCompatVideoTemplate = &Frame{
@@ -33,6 +36,7 @@ type compatInputConfig struct {
 	audioInterval    time.Duration
 	videoInterval    time.Duration
 	runtimeDetection bool
+	sidecars         []shared.Stream
 }
 
 func WithCompatAudioTimeout(d time.Duration) CompatInputOption {
@@ -73,10 +77,17 @@ func WithCompatRuntimeDetection(enabled bool) CompatInputOption {
 	}
 }
 
+func WithCompatSidecars(sidecars ...shared.Stream) CompatInputOption {
+	return func(cfg *compatInputConfig) {
+		cfg.sidecars = append(cfg.sidecars, sidecars...)
+	}
+}
+
 type compatInputStream struct {
-	id     string
-	source Stream
-	cfg    compatInputConfig
+	id       string
+	source   Stream
+	cfg      compatInputConfig
+	sidecars []shared.Stream
 
 	videoChan chan *Frame
 	audioChan chan *Frame
@@ -98,9 +109,9 @@ type compatInputStream struct {
 	audioSequence  int64
 	lastVideoGOPID int64
 
-	templateMu      sync.RWMutex
-	lastVideoKeyAU  *Frame
-	lastAudioAU     *Frame
+	templateMu     sync.RWMutex
+	lastVideoKeyAU *Frame
+	lastAudioAU    *Frame
 
 	timingMu           sync.RWMutex
 	lastVideoPTS       time.Duration
@@ -133,6 +144,7 @@ func NewCompatibleInput(source Stream, opts ...CompatInputOption) Stream {
 		id:        source.GetID(),
 		source:    source,
 		cfg:       cfg,
+		sidecars:  append([]shared.Stream(nil), cfg.sidecars...),
 		videoChan: make(chan *Frame, 256),
 		audioChan: make(chan *Frame, 256),
 		done:      make(chan struct{}),
@@ -153,6 +165,10 @@ func (c *compatInputStream) GetID() string { return c.id }
 
 func (c *compatInputStream) Type() string { return c.source.Type() }
 
+func (c *compatInputStream) AddSidecars(sidecars ...shared.Stream) {
+	c.sidecars = append(c.sidecars, sidecars...)
+}
+
 func (c *compatInputStream) Start() {
 	c.startOnce.Do(func() {
 		c.runWG.Add(4)
@@ -162,12 +178,14 @@ func (c *compatInputStream) Start() {
 		go c.syntheticLoop()
 	})
 	c.setActive(true)
+	shared.StartSidecars(c.sidecars)
 	c.source.Start()
 }
 
 func (c *compatInputStream) Stop() {
 	c.setActive(false)
 	c.source.Stop()
+	shared.StopSidecars(c.sidecars)
 }
 
 func (c *compatInputStream) Close() {
@@ -175,6 +193,7 @@ func (c *compatInputStream) Close() {
 		c.flushSyntheticBeforeClose()
 		close(c.done)
 		c.source.Close()
+		shared.CloseSidecars(c.sidecars)
 		c.runWG.Wait()
 		close(c.videoChan)
 		close(c.audioChan)
@@ -182,7 +201,7 @@ func (c *compatInputStream) Close() {
 }
 
 func (c *compatInputStream) State() *State {
-	return c.source.State()
+	return shared.MergeServedState(c.source.State(), c.sidecars)
 }
 
 func (c *compatInputStream) Clone() (Stream, error) {
@@ -190,14 +209,20 @@ func (c *compatInputStream) Clone() (Stream, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewCompatibleInput(
+	clonedSidecars, err := shared.CloneStreams(c.sidecars)
+	if err != nil {
+		return nil, err
+	}
+	clonedStream := NewCompatibleInput(
 		cloned,
 		WithCompatAudioTimeout(c.cfg.audioTimeout),
 		WithCompatVideoTimeout(c.cfg.videoTimeout),
 		WithCompatAudioInterval(c.cfg.audioInterval),
 		WithCompatVideoInterval(c.cfg.videoInterval),
 		WithCompatRuntimeDetection(c.cfg.runtimeDetection),
-	), nil
+		WithCompatSidecars(clonedSidecars...),
+	)
+	return clonedStream, nil
 }
 
 func (c *compatInputStream) WaitForStart(ctx context.Context) error {
@@ -240,14 +265,18 @@ func (c *compatInputStream) forwardVideo() {
 				continue
 			}
 			c.cacheRealVideoTemplate(out)
-			if !c.isActive() {
-				continue
-			}
 
 			c.timingMu.Lock()
 			c.lastRealVideoAt = time.Now()
 			c.nextSyntheticVideo = c.lastRealVideoAt.Add(c.cfg.videoTimeout)
 			c.timingMu.Unlock()
+
+			if !c.isActive() {
+				if !c.emitVideoToSidecars(out) {
+					return
+				}
+				continue
+			}
 
 			if !c.emitVideo(out) {
 				return
@@ -276,14 +305,18 @@ func (c *compatInputStream) forwardAudio() {
 				continue
 			}
 			c.cacheRealAudioTemplate(out)
-			if !c.isActive() {
-				continue
-			}
 
 			c.timingMu.Lock()
 			c.lastRealAudioAt = time.Now()
 			c.nextSyntheticAudio = c.lastRealAudioAt.Add(c.cfg.audioTimeout)
 			c.timingMu.Unlock()
+
+			if !c.isActive() {
+				if !c.emitAudioToSidecars(out) {
+					return
+				}
+				continue
+			}
 
 			if !c.emitAudio(out) {
 				return
@@ -330,7 +363,8 @@ func (c *compatInputStream) syntheticLoop() {
 }
 
 func (c *compatInputStream) emitSyntheticIfNeeded(now time.Time) {
-	if !c.isActive() {
+	active := c.isActive()
+	if !active && len(c.sidecars) == 0 {
 		return
 	}
 
@@ -339,8 +373,14 @@ func (c *compatInputStream) emitSyntheticIfNeeded(now time.Time) {
 		return
 	}
 
-	c.emitSyntheticVideoBurst(info, infoAt, now)
-	c.emitSyntheticAudioBurst(info, infoAt, now)
+	if active {
+		c.emitSyntheticVideoBurst(info, infoAt, now)
+		c.emitSyntheticAudioBurst(info, infoAt, now)
+		return
+	}
+
+	c.emitSyntheticVideoSidecarBurst(info, infoAt, now)
+	c.emitSyntheticAudioSidecarBurst(info, infoAt, now)
 }
 
 func (c *compatInputStream) shouldGenerateVideo(info InputTrackInfo, infoAt, now time.Time) bool {
@@ -422,6 +462,30 @@ func (c *compatInputStream) emitSyntheticAudioBurst(info InputTrackInfo, infoAt,
 				return
 			}
 		} else {
+			return
+		}
+	}
+}
+
+func (c *compatInputStream) emitSyntheticVideoSidecarBurst(info InputTrackInfo, infoAt, now time.Time) {
+	for i := 0; i < 8 && c.shouldGenerateVideo(info, infoAt, now); i++ {
+		frame := c.syntheticVideoFrame(c.syntheticFrameTime(true, info, infoAt, now))
+		if frame == nil {
+			return
+		}
+		if !c.emitVideoToSidecars(frame) {
+			return
+		}
+	}
+}
+
+func (c *compatInputStream) emitSyntheticAudioSidecarBurst(info InputTrackInfo, infoAt, now time.Time) {
+	for i := 0; i < 32 && c.shouldGenerateAudio(info, infoAt, now); i++ {
+		frame := c.syntheticAudioFrame(c.syntheticFrameTime(false, info, infoAt, now))
+		if frame == nil {
+			return
+		}
+		if !c.emitAudioToSidecars(frame) {
 			return
 		}
 	}
@@ -614,24 +678,51 @@ func (c *compatInputStream) nextPTSLocked(video bool, step time.Duration) time.D
 }
 
 func (c *compatInputStream) emitVideo(frame *Frame) bool {
+	shared.PushToSidecars(c.sidecars, frame, true)
 	select {
 	case c.videoChan <- frame:
 		return true
-	case <-c.done:
-		return false
-	}
-}
-
-func (c *compatInputStream) emitAudio(frame *Frame) bool {
-	select {
-	case c.audioChan <- frame:
+	case <-time.After(compatMainPathWriteTimeout):
 		return true
 	case <-c.done:
 		return false
 	}
 }
 
+func (c *compatInputStream) emitVideoToSidecars(frame *Frame) bool {
+	select {
+	case <-c.done:
+		return false
+	default:
+	}
+	shared.PushToSidecars(c.sidecars, frame, true)
+	return true
+}
+
+func (c *compatInputStream) emitAudio(frame *Frame) bool {
+	shared.PushToSidecars(c.sidecars, frame, false)
+	select {
+	case c.audioChan <- frame:
+		return true
+	case <-time.After(compatMainPathWriteTimeout):
+		return true
+	case <-c.done:
+		return false
+	}
+}
+
+func (c *compatInputStream) emitAudioToSidecars(frame *Frame) bool {
+	select {
+	case <-c.done:
+		return false
+	default:
+	}
+	shared.PushToSidecars(c.sidecars, frame, false)
+	return true
+}
+
 func (c *compatInputStream) tryEmitVideo(frame *Frame) bool {
+	shared.PushToSidecars(c.sidecars, frame, true)
 	select {
 	case c.videoChan <- frame:
 		return true
@@ -643,6 +734,7 @@ func (c *compatInputStream) tryEmitVideo(frame *Frame) bool {
 }
 
 func (c *compatInputStream) tryEmitAudio(frame *Frame) bool {
+	shared.PushToSidecars(c.sidecars, frame, false)
 	select {
 	case c.audioChan <- frame:
 		return true

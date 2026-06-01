@@ -30,6 +30,10 @@ type ObjectURLProvider interface {
 	ObjectURL(path string) (string, error)
 }
 
+type LocalPathProvider interface {
+	LocalPath() string
+}
+
 func ResolveObjectURL(folder Folder, path string) (string, error) {
 	if folder == nil {
 		return "", fmt.Errorf("nil folder")
@@ -41,6 +45,23 @@ func ResolveObjectURL(folder Folder, path string) (string, error) {
 		return adapter.objectURL(path)
 	}
 	return "", fmt.Errorf("folder does not support object urls")
+}
+
+func ResolveLocalPath(folder Folder) (string, error) {
+	if folder == nil {
+		return "", fmt.Errorf("nil folder")
+	}
+	if provider, ok := folder.(LocalPathProvider); ok {
+		path := provider.LocalPath()
+		if path == "" {
+			return "", fmt.Errorf("folder returned empty local path")
+		}
+		return path, nil
+	}
+	if adapter, ok := folder.(folderAdapter); ok {
+		return adapter.localPath()
+	}
+	return "", fmt.Errorf("folder does not support local paths")
 }
 
 func AdaptFolder(v any) (Folder, error) {
@@ -81,6 +102,20 @@ func (a folderAdapter) objectURL(path string) (string, error) {
 	urlValue := out[0].Interface()
 	urlText, _ := urlValue.(string)
 	return urlText, toError(out[1].Interface())
+}
+
+func (a folderAdapter) localPath() (string, error) {
+	method := a.value.MethodByName("LocalPath")
+	if !method.IsValid() {
+		return "", fmt.Errorf("folder adapter: missing LocalPath")
+	}
+	out := method.Call(nil)
+	if len(out) != 1 {
+		return "", fmt.Errorf("folder adapter: invalid LocalPath signature")
+	}
+	pathValue := out[0].Interface()
+	pathText, _ := pathValue.(string)
+	return pathText, nil
 }
 
 func (a folderAdapter) Folder(path string) Folder {

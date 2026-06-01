@@ -122,6 +122,95 @@ func TestCompatibleInput_FillsMissingVideoTrack(t *testing.T) {
 	}
 }
 
+func TestCompatibleInput_InactiveInputStillFeedsSidecars(t *testing.T) {
+	source := newCompatMockStream("inactive-source", InputTrackInfo{
+		Initialized:     true,
+		HasVideo:        true,
+		HasAudio:        true,
+		AudioSampleRate: DefaultAudioRate,
+	})
+	sidecar := newCompatMockStream("inactive-sidecar", InputTrackInfo{})
+
+	stream := NewCompatibleInput(
+		source,
+		WithCompatSidecars(sidecar),
+	)
+	compat, ok := stream.(*compatInputStream)
+	if !ok {
+		t.Fatalf("unexpected stream type %T", stream)
+	}
+
+	stream.Start()
+	defer stream.Close()
+
+	compat.setActive(false)
+
+	frame := &Frame{
+		PTS:        time.Second,
+		DTS:        time.Second,
+		Timestamp:  time.Now(),
+		Payload:    [][]byte{{0x67, 0x42, 0x00, 0x1f}, {0x68, 0xce, 0x38, 0x80}, {0x65, 0x88, 0x84}},
+		Codec:      "h264",
+		IsKeyFrame: true,
+		InputID:    source.id,
+	}
+
+	source.videoCh <- frame
+
+	select {
+	case got := <-sidecar.GetVideoChan():
+		if got == nil {
+			t.Fatal("expected sidecar video frame")
+		}
+		if got.InputID != source.id {
+			t.Fatalf("unexpected sidecar input id: got %q want %q", got.InputID, source.id)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("timed out waiting for sidecar video frame")
+	}
+
+	select {
+	case got := <-stream.GetVideoChan():
+		t.Fatalf("inactive input should not forward to primary stream channel, got %+v", got)
+	case <-time.After(75 * time.Millisecond):
+	}
+}
+
+func TestCompatibleInput_ActiveMainPathWriteTimesOutQuickly(t *testing.T) {
+	source := newCompatMockStream("timeout-source", InputTrackInfo{
+		Initialized: true,
+		HasVideo:    true,
+	})
+	stream := NewCompatibleInput(source)
+	compat, ok := stream.(*compatInputStream)
+	if !ok {
+		t.Fatalf("unexpected stream type %T", stream)
+	}
+
+	for i := 0; i < cap(compat.videoChan); i++ {
+		compat.videoChan <- &Frame{SequenceID: int64(i + 1)}
+	}
+
+	start := time.Now()
+	ok = compat.emitVideo(&Frame{
+		PTS:        time.Second,
+		DTS:        time.Second,
+		Timestamp:  time.Now(),
+		Payload:    [][]byte{{0x65}},
+		Codec:      "h264",
+		IsKeyFrame: true,
+		InputID:    source.id,
+	})
+	elapsed := time.Since(start)
+
+	if !ok {
+		t.Fatal("emitVideo should drop on timeout, not stop the stream")
+	}
+	if elapsed > 50*time.Millisecond {
+		t.Fatalf("emitVideo took too long on blocked main path: %v", elapsed)
+	}
+}
+
 func TestCompatibleInput_FillsMissingVideoTrackWithoutSharedTemplate(t *testing.T) {
 	source := newCompatMockStream("audio-only-no-template", InputTrackInfo{
 		Initialized:     true,

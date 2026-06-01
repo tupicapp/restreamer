@@ -9,6 +9,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const nonRestartableRemovableAfter = 5 * time.Second
+
 type streamManager struct {
 	Stream
 	startOnce      sync.Once
@@ -18,21 +20,25 @@ type streamManager struct {
 }
 
 func Manage(s Stream) Stream {
-	if s.IsRestartable() {
-		return &streamManager{
-			Stream:         s,
-			done:           make(chan struct{}),
-			streamsToClose: make(chan Stream, 10),
-		}
+	if s == nil {
+		return nil
 	}
-
-	return s
+	if _, ok := s.(*streamManager); ok {
+		return s
+	}
+	return &streamManager{
+		Stream:         s,
+		done:           make(chan struct{}),
+		streamsToClose: make(chan Stream, 10),
+	}
 }
 
 func (s *streamManager) Start() {
-	s.startOnce.Do(func() {
-		go s.startWatch()
-	})
+	if s.Stream != nil && s.Stream.IsRestartable() {
+		s.startOnce.Do(func() {
+			go s.startWatch()
+		})
+	}
 
 	s.Stream.Start()
 }
@@ -43,6 +49,23 @@ func (s *streamManager) Close() {
 	})
 
 	s.Stream.Close()
+}
+
+func (s *streamManager) State() *State {
+	if s == nil || s.Stream == nil {
+		return nil
+	}
+
+	state := s.Stream.State()
+	if state == nil {
+		return nil
+	}
+
+	cloned := *state
+	if !s.Stream.IsRestartable() && state.IsStarted && !state.LastIO.IsZero() && time.Since(state.LastIO) > nonRestartableRemovableAfter {
+		cloned.IsRemovable = true
+	}
+	return &cloned
 }
 
 func (s *streamManager) startWatch() {

@@ -100,7 +100,6 @@ func (s *Streamer) RemoveInputIfSame(streamID string, expected Stream) bool {
 }
 
 func (s *Streamer) AddOutput(o Stream) error {
-	// TODO : fix these locks
 	s.outputsMu.Lock()
 	defer s.outputsMu.Unlock()
 	return s.upsertOutputLocked(o)
@@ -240,21 +239,27 @@ func (s *Streamer) State() StreamerState {
 		streamOutputs = append(streamOutputs, val.State())
 	}
 
-	inputIDs := inputIDsFromStates(streamInputs)
-	availableInputHLSURLs := s.availableInputHLSURLs(inputIDs)
-	availableOutputHLSURLs := s.availableOutputHLSURLs()
-	inputRecordHLSURLs := s.availableInputRecordHLSURLs(inputIDs)
-	outputRecordHLSURLs := s.availableOutputRecordHLSURLs()
-
 	return StreamerState{
-		IsStarted:              s.IsStarted,
-		CurrentInputID:         activeInput,
-		StreamInputs:           streamInputs,
-		StreamOutputs:          streamOutputs,
-		AvailableInputHLSURLs:  availableInputHLSURLs,
-		AvailableOutputHLSURLs: availableOutputHLSURLs,
-		InputRecordHLSURLs:     inputRecordHLSURLs,
-		OutputRecordHLSURLs:    outputRecordHLSURLs,
+		IsStarted:      s.IsStarted,
+		CurrentInputID: activeInput,
+		StreamInputs:   streamInputs,
+		StreamOutputs:  streamOutputs,
+	}
+}
+
+type streamStateIdentity struct {
+	URL    string               `json:"url,omitempty"`
+	Served []shared.ServedState `json:"served,omitempty"`
+}
+
+func currentStreamStateIdentity(stream Stream) streamStateIdentity {
+	if stream == nil || stream.State() == nil {
+		return streamStateIdentity{}
+	}
+	state := stream.State()
+	return streamStateIdentity{
+		URL:    state.Url,
+		Served: append([]shared.ServedState(nil), state.Served...),
 	}
 }
 
@@ -265,8 +270,8 @@ func (s *Streamer) upsertOutputLocked(newOutput Stream) error {
 
 	oldOutput, exists := s.outputs[newOutput.GetID()]
 	if exists {
-		oldHash, _ := hashStruct(oldOutput.State().Url)
-		newHash, _ := hashStruct(newOutput.State().Url)
+		oldHash, _ := hashStruct(currentStreamStateIdentity(oldOutput))
+		newHash, _ := hashStruct(currentStreamStateIdentity(newOutput))
 		if newHash == oldHash {
 			return nil
 		}
@@ -320,7 +325,7 @@ func (s *Streamer) removeInputLocked(streamID string, expected Stream, matchExpe
 	if !ok {
 		return false
 	}
-	if matchExpected && i != expected {
+	if matchExpected && !sameManagedStreamInstance(i, expected) {
 		return false
 	}
 
@@ -348,8 +353,23 @@ func (s *Streamer) removeInputLocked(streamID string, expected Stream, matchExpe
 	})
 
 	delete(s.inputs, streamID)
-	s.hlsFolders.RemoveInput(streamID)
 	return true
+}
+
+func sameManagedStreamInstance(stored Stream, expected Stream) bool {
+	if stored == expected {
+		return true
+	}
+	if stored == nil || expected == nil {
+		return false
+	}
+	if managed, ok := stored.(*streamManager); ok {
+		return managed.Stream == expected
+	}
+	if managed, ok := expected.(*streamManager); ok {
+		return managed.Stream == stored
+	}
+	return false
 }
 
 func (s *Streamer) upsertInputLocked(newInput Stream) error {
@@ -359,8 +379,8 @@ func (s *Streamer) upsertInputLocked(newInput Stream) error {
 
 	oldInput, exists := s.inputs[newInput.GetID()]
 	if exists {
-		oldHash, _ := hashStruct(oldInput.State().Url)
-		newHash, _ := hashStruct(newInput.State().Url)
+		oldHash, _ := hashStruct(currentStreamStateIdentity(oldInput))
+		newHash, _ := hashStruct(currentStreamStateIdentity(newInput))
 		if newHash == oldHash {
 			return nil
 		}

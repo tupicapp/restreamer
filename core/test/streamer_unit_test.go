@@ -290,8 +290,8 @@ func TestStreamer_StopOutput_StopsWithoutRemoving(t *testing.T) {
 
 func TestStreamManager_RestartsOnStaleIO(t *testing.T) {
 	nonRestartable := newMockStream("plain", "url", false)
-	if got := corehelpers.Manage(nonRestartable); got != nonRestartable {
-		t.Fatalf("expected non-restartable stream to be returned as-is")
+	if got := corehelpers.Manage(nonRestartable); got == nonRestartable {
+		t.Fatalf("expected non-restartable stream to be wrapped")
 	}
 
 	restartable := newMockStream("restartable", "url", true)
@@ -312,4 +312,88 @@ func TestStreamManager_RestartsOnStaleIO(t *testing.T) {
 	// More detailed assertions would require access to unexported fields
 	time.Sleep(time.Second)
 	t.Log("stream manager started successfully")
+}
+
+func TestStreamManager_MarksNonRestartableStaleStreamRemovable(t *testing.T) {
+	stream := newMockStream("stale", "url", false)
+	stream.lastIO = time.Now().Add(-10 * time.Second)
+	stream.isStarted = true
+
+	managed := corehelpers.Manage(stream)
+	state := managed.State()
+	if state == nil {
+		t.Fatal("expected managed state")
+	}
+	if !state.IsRemovable {
+		t.Fatalf("expected stale non-restartable stream to be removable: %+v", state)
+	}
+}
+
+func TestStreamer_StartLife_RemovesRemovableStreams(t *testing.T) {
+	streamer := corehelpers.NewStreamer()
+	streamer.StartLife()
+	defer streamer.Close()
+
+	removableInput := newMockStream("input-removable", "url-in", false)
+	removableInput.lastIO = time.Now().Add(-10 * time.Second)
+	removableInput.isStarted = true
+
+	activeInput := newMockStream("input-active", "url-active", false)
+	activeInput.lastIO = time.Now().Add(-10 * time.Second)
+	activeInput.isStarted = true
+
+	removableOutput := newMockStream("output-removable", "url-out", false)
+	removableOutput.lastIO = time.Now().Add(-10 * time.Second)
+	removableOutput.isStarted = true
+
+	if err := streamer.UpdateStreams([]Stream{removableInput, activeInput}, []Stream{removableOutput}); err != nil {
+		t.Fatalf("UpdateStreams failed: %v", err)
+	}
+	if ok := streamer.Switch(activeInput.GetID()); !ok {
+		t.Fatalf("failed to set active input")
+	}
+
+	deadline := time.Now().Add(2500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		state := streamer.State()
+		if len(state.StreamInputs) == 1 && len(state.StreamOutputs) == 0 && state.StreamInputs[0] != nil && state.StreamInputs[0].StreamID == activeInput.GetID() {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	state := streamer.State()
+	t.Fatalf("expected removable streams to be pruned, got inputs=%d outputs=%d current=%s", len(state.StreamInputs), len(state.StreamOutputs), state.CurrentInputID)
+}
+
+func TestStreamer_StartLife_AutoSwitchesFromStaleActiveInput(t *testing.T) {
+	streamer := corehelpers.NewStreamer()
+	streamer.StartLife()
+	defer streamer.Close()
+
+	staleInput := newMockStream("input-stale", "url-stale", false)
+	staleInput.lastIO = time.Now().Add(-2 * time.Second)
+	staleInput.isStarted = true
+
+	freshInput := newMockStream("input-fresh", "url-fresh", false)
+	freshInput.lastIO = time.Now()
+	freshInput.isStarted = true
+
+	if err := streamer.UpdateStreams([]Stream{staleInput, freshInput}, nil); err != nil {
+		t.Fatalf("UpdateStreams failed: %v", err)
+	}
+	if ok := streamer.Switch(staleInput.GetID()); !ok {
+		t.Fatalf("failed to set stale input active")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if state := streamer.State(); state.CurrentInputID == freshInput.GetID() {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	state := streamer.State()
+	t.Fatalf("expected auto switch to fresh input, got current=%s", state.CurrentInputID)
 }

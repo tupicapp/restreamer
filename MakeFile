@@ -104,4 +104,4 @@ irajstreamer-all-tests:
 	@echo "==> irajstreamer-all-tests: OK"
 
 lines:
-	find . -name "*.go" -type f -print0 | xargs -0 wc -l
+	find ./core -name "*.go" -type f -print0 | xargs -0 wc -l

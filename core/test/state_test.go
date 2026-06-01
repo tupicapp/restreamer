@@ -2,8 +2,6 @@ package test
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -11,7 +9,6 @@ import (
 	"time"
 
 	corehelpers "github.com/tupicapp/restreamer/core"
-	"github.com/tupicapp/restreamer/core/storage"
 )
 
 type stateMockStream struct {
@@ -30,6 +27,9 @@ type stateMockStream struct {
 	cloned    int
 	lastIO    time.Time
 	resumable bool
+	localPath string
+	serveType string
+	serveMode string
 }
 
 func newStateMockStream(id, url, streamType string) *stateMockStream {
@@ -83,6 +83,9 @@ func (m *stateMockStream) State() *State {
 		StreamID:    m.id,
 		Type:        m.streamType,
 		Url:         m.url,
+		LocalPath:   m.localPath,
+		ServeType:   m.serveType,
+		ServeMode:   m.serveMode,
 	}
 }
 
@@ -90,7 +93,11 @@ func (m *stateMockStream) Clone() (Stream, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.cloned++
-	return newStateMockStream(m.id, m.url, m.streamType), nil
+	cloned := newStateMockStream(m.id, m.url, m.streamType)
+	cloned.localPath = m.localPath
+	cloned.serveType = m.serveType
+	cloned.serveMode = m.serveMode
+	return cloned, nil
 }
 
 func (m *stateMockStream) WaitForStart(context.Context) error { return nil }
@@ -119,10 +126,11 @@ func TestStreamer_StateLifecycle_MixedInputs(t *testing.T) {
 	}
 
 	for _, in := range inputs {
-		if err := streamer.AddInput(newStateMockStream(in.id, in.url, in.typ)); err != nil {
+		stream := newStateMockStream(in.id, in.url, in.typ)
+		configureStateTestServing(stream, in.id)
+		if err := streamer.AddInput(stream); err != nil {
 			t.Fatalf("AddInput(%q) error = %v", in.id, err)
 		}
-		configureStateTestFolders(t, streamer, in.id)
 	}
 
 	state := streamer.State()
@@ -130,8 +138,7 @@ func TestStreamer_StateLifecycle_MixedInputs(t *testing.T) {
 		t.Fatalf("input count mismatch: got=%d want=%d", got, want)
 	}
 	assertStateHasInputIDs(t, state, []string{"hls", "hls-live", "rtmp-av", "rtmp-audio-less", "rtmp-video-less"})
-	assertURLListHasIDs(t, state.AvailableInputHLSURLs, []string{"hls", "hls-live", "rtmp-av", "rtmp-audio-less", "rtmp-video-less"})
-	assertURLListHasIDs(t, state.InputRecordHLSURLs, []string{"hls", "hls-live", "rtmp-av", "rtmp-audio-less", "rtmp-video-less"})
+	assertInputStatesHaveServeInfo(t, state, []string{"hls", "hls-live", "rtmp-av", "rtmp-audio-less", "rtmp-video-less"}, "hls", "live")
 
 	switchOrder := []string{"hls", "hls-live", "rtmp-av", "rtmp-audio-less", "rtmp-video-less"}
 	for _, inputID := range switchOrder {
@@ -160,8 +167,7 @@ func TestStreamer_StateLifecycle_MixedInputs(t *testing.T) {
 		remaining = removeIDFromList(remaining, removeID)
 		cur := streamer.State()
 		assertStateHasInputIDs(t, cur, remaining)
-		assertURLListHasIDs(t, cur.AvailableInputHLSURLs, remaining)
-		assertURLListHasIDs(t, cur.InputRecordHLSURLs, remaining)
+		assertInputStatesHaveServeInfo(t, cur, remaining, "hls", "live")
 	}
 
 	final := streamer.State()
@@ -238,10 +244,11 @@ func TestStreamer_State_MultiInputsWithoutSwitch_ProgramURLsPresent(t *testing.T
 
 	inputIDs := []string{"rtmp-av", "rtmp-audio-less", "rtmp-video-less"}
 	for _, inputID := range inputIDs {
-		if err := streamer.AddInput(newStateMockStream(inputID, "rtmp://source/live/"+inputID, "rtmp")); err != nil {
+		stream := newStateMockStream(inputID, "rtmp://source/live/"+inputID, "rtmp")
+		configureStateTestServing(stream, inputID)
+		if err := streamer.AddInput(stream); err != nil {
 			t.Fatalf("AddInput(%q) error = %v", inputID, err)
 		}
-		configureStateTestFolders(t, streamer, inputID)
 	}
 
 	state := streamer.State()
@@ -249,8 +256,7 @@ func TestStreamer_State_MultiInputsWithoutSwitch_ProgramURLsPresent(t *testing.T
 		t.Fatalf("expected CurrentInputID to stay empty when no switch happened, got %q", state.CurrentInputID)
 	}
 	assertStateHasInputIDs(t, state, inputIDs)
-	assertURLListHasIDs(t, state.AvailableInputHLSURLs, inputIDs)
-	assertURLListHasIDs(t, state.InputRecordHLSURLs, inputIDs)
+	assertInputStatesHaveServeInfo(t, state, inputIDs, "hls", "live")
 }
 
 func TestStreamer_UpdateStreams_RemovesDetachedInputFolders(t *testing.T) {
@@ -259,52 +265,31 @@ func TestStreamer_UpdateStreams_RemovesDetachedInputFolders(t *testing.T) {
 
 	inputA := newStateMockStream("input-a", "rtmp://source/live/input-a", "rtmp")
 	inputB := newStateMockStream("input-b", "rtmp://source/live/input-b", "rtmp")
+	configureStateTestServing(inputA, inputA.GetID())
+	configureStateTestServing(inputB, inputB.GetID())
 	if err := streamer.UpdateStreams([]Stream{inputA, inputB}, nil); err != nil {
 		t.Fatalf("UpdateStreams(add) error = %v", err)
 	}
-	configureStateTestFolders(t, streamer, inputA.GetID())
-	configureStateTestFolders(t, streamer, inputB.GetID())
 
 	initial := streamer.State()
-	assertURLListHasIDs(t, initial.AvailableInputHLSURLs, []string{"input-a", "input-b"})
-	assertURLListHasIDs(t, initial.InputRecordHLSURLs, []string{"input-a", "input-b"})
+	assertInputStatesHaveServeInfo(t, initial, []string{"input-a", "input-b"}, "hls", "live")
 
 	replacementA := newStateMockStream("input-a", "rtmp://source/live/input-a-2", "rtmp")
+	configureStateTestServing(replacementA, replacementA.GetID())
 	if err := streamer.UpdateStreams([]Stream{replacementA}, nil); err != nil {
 		t.Fatalf("UpdateStreams(remove input-b) error = %v", err)
 	}
 
 	state := streamer.State()
 	assertStateHasInputIDs(t, state, []string{"input-a"})
-	assertURLListHasIDs(t, state.AvailableInputHLSURLs, []string{"input-a"})
-	assertURLListHasIDs(t, state.InputRecordHLSURLs, []string{"input-a"})
+	assertInputStatesHaveServeInfo(t, state, []string{"input-a"}, "hls", "live")
 }
 
-func configureStateTestFolders(t *testing.T, streamer *corehelpers.Streamer, inputID string) {
-	t.Helper()
-
-	liveDir := filepath.Join(t.TempDir(), "live-"+inputID)
-	if err := os.MkdirAll(liveDir, 0755); err != nil {
-		t.Fatalf("MkdirAll(liveDir) error = %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(liveDir, "stream.m3u8"), []byte("#EXTM3U\n"), 0644); err != nil {
-		t.Fatalf("WriteFile(live playlist) error = %v", err)
-	}
-	if err := streamer.SetInputHLSFolder(inputID, storage.NewFolder(liveDir)); err != nil {
-		t.Fatalf("SetInputHLSFolder(%q) error = %v", inputID, err)
-	}
-
-	recordDir := filepath.Join(t.TempDir(), "record-"+inputID)
-	sessionDir := filepath.Join(recordDir, "0001")
-	if err := os.MkdirAll(sessionDir, 0755); err != nil {
-		t.Fatalf("MkdirAll(record session) error = %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(sessionDir, "stream.m3u8"), []byte("#EXTM3U\n"), 0644); err != nil {
-		t.Fatalf("WriteFile(record playlist) error = %v", err)
-	}
-	if err := streamer.SetInputRecordFolder(inputID, storage.NewFolder(recordDir)); err != nil {
-		t.Fatalf("SetInputRecordFolder(%q) error = %v", inputID, err)
-	}
+func configureStateTestServing(stream *stateMockStream, inputID string) {
+	stream.url = "https://live.example.com/inputs/" + inputID + "/stream.m3u8"
+	stream.localPath = "/tmp/inputs/" + inputID
+	stream.serveType = "hls"
+	stream.serveMode = "live"
 }
 
 func waitForCurrentInputState(t *testing.T, streamer *corehelpers.Streamer, expected string, timeout time.Duration) {
@@ -338,22 +323,25 @@ func assertStateHasInputIDs(t *testing.T, state corehelpers.StreamerState, expec
 	}
 }
 
-func assertURLListHasIDs(t *testing.T, urls []string, expectedIDs []string) {
+func assertInputStatesHaveServeInfo(t *testing.T, state corehelpers.StreamerState, expectedIDs []string, expectedServeType string, expectedServeMode string) {
 	t.Helper()
 
-	if got, want := len(urls), len(expectedIDs); got != want {
-		t.Fatalf("url count mismatch: got=%d want=%d urls=%v", got, want, urls)
-	}
 	for _, id := range expectedIDs {
-		found := false
-		for _, u := range urls {
-			if strings.Contains(u, id) {
-				found = true
-				break
-			}
+		input := findInputState(state, id)
+		if input == nil {
+			t.Fatalf("missing input state for %q", id)
 		}
-		if !found {
-			t.Fatalf("expected a URL containing input id %q, urls=%v", id, urls)
+		if input.ServeType != expectedServeType {
+			t.Fatalf("unexpected serve type for %q: got=%q want=%q", id, input.ServeType, expectedServeType)
+		}
+		if input.ServeMode != expectedServeMode {
+			t.Fatalf("unexpected serve mode for %q: got=%q want=%q", id, input.ServeMode, expectedServeMode)
+		}
+		if !strings.Contains(input.Url, id) {
+			t.Fatalf("expected url containing input id %q, got %q", id, input.Url)
+		}
+		if !strings.Contains(input.LocalPath, id) {
+			t.Fatalf("expected local path containing input id %q, got %q", id, input.LocalPath)
 		}
 	}
 }

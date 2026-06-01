@@ -200,7 +200,7 @@ func TestNewHLSAuto_RoutesToHLSInputForVOD(t *testing.T) {
 	srv := servePlaylist(t, vodMediaPlaylist)
 	defer srv.Close()
 
-	s, err := NewHLSAuto("test-vod", srv.URL+"/playlist.m3u8")
+	s, err := NewHLSAuto("test-vod", srv.URL+"/playlist.m3u8", nil)
 	if err != nil {
 		t.Fatalf("NewHLSAuto error: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestNewHLSAuto_RoutesToHLSLiveForLive(t *testing.T) {
 	srv := servePlaylist(t, liveMediaPlaylist)
 	defer srv.Close()
 
-	s, err := NewHLSAuto("test-live", srv.URL+"/playlist.m3u8")
+	s, err := NewHLSAuto("test-live", srv.URL+"/playlist.m3u8", nil)
 	if err != nil {
 		t.Fatalf("NewHLSAuto error: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestNewHLSAuto_RoutesToHLSLiveForLive(t *testing.T) {
 }
 
 func TestNewHLSAuto_ErrorOnBadURL(t *testing.T) {
-	_, err := NewHLSAuto("test-err", "http://127.0.0.1:19999/no-server.m3u8")
+	_, err := NewHLSAuto("test-err", "http://127.0.0.1:19999/no-server.m3u8", nil)
 	if err == nil {
 		t.Fatal("expected error for unreachable URL")
 	}
@@ -243,7 +243,7 @@ func TestNewHLSAuto_VODHasCorrectChannels(t *testing.T) {
 	srv := servePlaylist(t, vodMediaPlaylist)
 	defer srv.Close()
 
-	s, err := NewHLSAuto("test-chan", srv.URL+"/playlist.m3u8")
+	s, err := NewHLSAuto("test-chan", srv.URL+"/playlist.m3u8", nil)
 	if err != nil {
 		t.Fatalf("NewHLSAuto error: %v", err)
 	}
@@ -261,7 +261,7 @@ func TestNewHLSAuto_LiveHasCorrectChannels(t *testing.T) {
 	srv := servePlaylist(t, liveMediaPlaylist)
 	defer srv.Close()
 
-	s, err := NewHLSAuto("test-chan-live", srv.URL+"/playlist.m3u8")
+	s, err := NewHLSAuto("test-chan-live", srv.URL+"/playlist.m3u8", nil)
 	if err != nil {
 		t.Fatalf("NewHLSAuto error: %v", err)
 	}
@@ -279,7 +279,7 @@ func TestNewHLSAuto_VODImplementsStreamInterface(t *testing.T) {
 	srv := servePlaylist(t, vodMediaPlaylist)
 	defer srv.Close()
 
-	s, err := NewHLSAuto("test-iface", srv.URL+"/playlist.m3u8")
+	s, err := NewHLSAuto("test-iface", srv.URL+"/playlist.m3u8", nil)
 	if err != nil {
 		t.Fatalf("NewHLSAuto error: %v", err)
 	}
@@ -300,7 +300,7 @@ func TestNewHLSAuto_LiveImplementsStreamInterface(t *testing.T) {
 	srv := servePlaylist(t, liveMediaPlaylist)
 	defer srv.Close()
 
-	s, err := NewHLSAuto("test-iface-live", srv.URL+"/playlist.m3u8")
+	s, err := NewHLSAuto("test-iface-live", srv.URL+"/playlist.m3u8", nil)
 	if err != nil {
 		t.Fatalf("NewHLSAuto error: %v", err)
 	}
@@ -324,13 +324,13 @@ func TestNewHLSAuto_VODandLiveYieldSameInterfaceMethods(t *testing.T) {
 	liveSrv := servePlaylist(t, liveMediaPlaylist)
 	defer liveSrv.Close()
 
-	vod, err := NewHLSAuto("vod", vodSrv.URL+"/v.m3u8")
+	vod, err := NewHLSAuto("vod", vodSrv.URL+"/v.m3u8", nil)
 	if err != nil {
 		t.Fatalf("NewHLSAuto vod: %v", err)
 	}
 	defer vod.Close()
 
-	live, err := NewHLSAuto("live", liveSrv.URL+"/l.m3u8")
+	live, err := NewHLSAuto("live", liveSrv.URL+"/l.m3u8", nil)
 	if err != nil {
 		t.Fatalf("NewHLSAuto live: %v", err)
 	}

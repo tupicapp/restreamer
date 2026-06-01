@@ -64,7 +64,6 @@ type hlsLiveAsync struct {
 	segmentDuration time.Duration
 	playlistSize    int
 	targetDuration  int
-	pathPrefix      string
 
 	uploadCh chan *hlsBuiltSegment
 
@@ -114,11 +113,11 @@ type hlsLiveAsync struct {
 	hasLastVideoDTS90k bool
 	lastVideoDTS90k    int64
 
-	audioSampleRate int
-	activeAudioRate int
-	inputAudioRates map[string]int
+	audioSampleRate   int
+	activeAudioRate   int
+	inputAudioRates   map[string]int
 	pendingStartAudio []*shared.Frame
-	events          *shared.EventEmitter
+	events            *shared.EventEmitter
 }
 
 const maxPendingHLSStartAudio = 256
@@ -152,7 +151,6 @@ func newHLSLiveDestinationAsync(id string, outputFolder any, opts ...HLSLiveOpti
 		segmentDuration: legacy.segmentDuration,
 		playlistSize:    legacy.playlistSize,
 		targetDuration:  legacy.targetDuration,
-		pathPrefix:      legacy.pathPrefix,
 		uploadCh:        make(chan *hlsBuiltSegment, defaultHLSPlaylistSize+2),
 		events:          shared.NewEventEmitter(256),
 	}
@@ -160,12 +158,13 @@ func newHLSLiveDestinationAsync(id string, outputFolder any, opts ...HLSLiveOpti
 	return dest, nil
 }
 
-func (o *hlsLiveAsync) GetVideoChan() chan *shared.Frame { return o.gopBuffer.VideoFrameChan }
-func (o *hlsLiveAsync) GetAudioChan() chan *shared.Frame { return o.gopBuffer.AudioFrameChan }
-func (o *hlsLiveAsync) GetID() string                    { return o.id }
-func (o *hlsLiveAsync) Type() string                     { return "writer" }
-func (o *hlsLiveAsync) IsRestartable() bool              { return false }
-func (o *hlsLiveAsync) RestartInterval() time.Duration   { return 0 }
+func (o *hlsLiveAsync) GetVideoChan() chan *shared.Frame      { return o.gopBuffer.VideoFrameChan }
+func (o *hlsLiveAsync) GetAudioChan() chan *shared.Frame      { return o.gopBuffer.AudioFrameChan }
+func (o *hlsLiveAsync) GetID() string                         { return o.id }
+func (o *hlsLiveAsync) Type() string                          { return "writer" }
+func (o *hlsLiveAsync) AddSidecars(sidecars ...shared.Stream) {}
+func (o *hlsLiveAsync) IsRestartable() bool                   { return false }
+func (o *hlsLiveAsync) RestartInterval() time.Duration        { return 0 }
 
 func (o *hlsLiveAsync) Clone() (shared.Stream, error) {
 	return nil, errors.New("hls destination cannot be cloned")
@@ -201,7 +200,7 @@ func (o *hlsLiveAsync) Start() {
 
 	if o.isInitiated {
 		o.isStarted = true
-		o.events.Emit(shared.Event{Type: shared.EventTypeStreamStarted, StreamID: o.id, StreamType: o.Type(), Message: "hls destination resumed", Meta: shared.StreamLifecycleMeta{URL: o.url}})
+		o.events.Emit(shared.Event{Type: shared.EventTypeStreamStarted, StreamID: o.id, StreamType: o.Type(), Message: "hls destination resumed", Meta: shared.StreamLifecycleMeta{URL: o.playlistURL()}})
 		return
 	}
 
@@ -209,7 +208,7 @@ func (o *hlsLiveAsync) Start() {
 	o.isStarted = true
 
 	if err := o.outputFolder.RemoveAll(); err != nil {
-		getLogger().Error("hls destination remove dir failed", zap.String("path", o.url), zap.Error(err))
+		getLogger().Error("hls destination remove dir failed", zap.String("path", o.localPath()), zap.Error(err))
 		o.isStarted = false
 		return
 	}
@@ -222,7 +221,7 @@ func (o *hlsLiveAsync) Start() {
 	}
 
 	close(o.Started)
-	o.events.Emit(shared.Event{Type: shared.EventTypeStreamStarted, StreamID: o.id, StreamType: o.Type(), Message: "hls destination started", Meta: shared.StreamLifecycleMeta{URL: o.url}})
+	o.events.Emit(shared.Event{Type: shared.EventTypeStreamStarted, StreamID: o.id, StreamType: o.Type(), Message: "hls destination started", Meta: shared.StreamLifecycleMeta{URL: o.playlistURL()}})
 
 	o.runWg.Add(3)
 	go o.runBuilder()
@@ -263,10 +262,20 @@ func (o *hlsLiveAsync) State() *shared.State {
 	}
 
 	return &shared.State{
-		IsStarted:          o.isStarted,
-		LastIO:             lastIO,
-		StreamID:           o.id,
-		Url:                o.url,
+		IsStarted: o.isStarted,
+		LastIO:    lastIO,
+		StreamID:  o.id,
+		Url:       o.playlistURL(),
+		LocalPath: o.localPath(),
+		ServeType: "hls",
+		ServeMode: "live",
+		Served: []shared.ServedState{{
+			StreamID:  o.id,
+			Url:       o.playlistURL(),
+			LocalPath: o.localPath(),
+			ServeType: "hls",
+			ServeMode: "live",
+		}},
 		Type:               o.Type(),
 		TotalVideoFrames:   o.TotalVideoFrames,
 		TotalAudioFrames:   o.TotalAudioFrames,
@@ -666,9 +675,9 @@ func (o *hlsLiveAsync) uploadSegment(seg *hlsBuiltSegment) error {
 		Meta: shared.SegmentGeneratedMeta{
 			Sequence:        seg.Seq,
 			FileName:        seg.FileName,
-			SegmentURL:      o.eventObjectURLOrPath(seg.FileName),
+			SegmentURL:      o.objectURL(seg.FileName),
 			PlaylistName:    "stream.m3u8",
-			PlaylistURL:     o.eventObjectURLOrPath("stream.m3u8"),
+			PlaylistURL:     o.playlistURL(),
 			DurationSeconds: seg.Duration,
 		},
 	})
@@ -715,7 +724,7 @@ func (o *hlsLiveAsync) writePlaylistLocked(endList bool) error {
 		}
 		prevSeq = entry.Seq
 		b.WriteString(fmt.Sprintf("#EXTINF:%.3f,\n", entry.Duration))
-		b.WriteString(o.objectURLOrPath(entry.FileName) + "\n")
+		b.WriteString(entry.FileName + "\n")
 	}
 
 	if endList {
@@ -725,19 +734,23 @@ func (o *hlsLiveAsync) writePlaylistLocked(endList bool) error {
 	return shared.WriteFileAtomic(o.outputFolder, "stream.m3u8", []byte(b.String()))
 }
 
-func (o *hlsLiveAsync) segmentURI(fileName string) string {
-	return shared.JoinURLPrefix(o.pathPrefix, strings.TrimLeft(fileName, "/"))
+func (o *hlsLiveAsync) objectURL(fileName string) string {
+	return shared.PreferredURL("", o.outputFolder, fileName)
 }
 
-func (o *hlsLiveAsync) objectURLOrPath(fileName string) string {
-	if o.pathPrefix != "" {
-		return shared.JoinURLPrefix(o.pathPrefix, fileName)
+
+
+
+func (o *hlsLiveAsync) playlistURL() string {
+	return o.objectURL("stream.m3u8")
+}
+
+func (o *hlsLiveAsync) localPath() string {
+	path, err := shared.ResolveLocalPath(o.outputFolder)
+	if err != nil {
+		return ""
 	}
-	return fileName
-}
-
-func (o *hlsLiveAsync) eventObjectURLOrPath(fileName string) string {
-	return o.objectURLOrPath(fileName)
+	return path
 }
 
 func (o *hlsLiveAsync) computeTargetDuration() int {

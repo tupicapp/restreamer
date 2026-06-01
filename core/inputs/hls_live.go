@@ -14,8 +14,9 @@ import (
 )
 
 type hlsInputLive struct {
-	id  string
-	uri string
+	id       string
+	uri      string
+	sidecars []shared.Stream
 
 	videoChan chan *Frame
 	audioChan chan *Frame
@@ -43,10 +44,18 @@ type hlsInputLive struct {
 	events *shared.EventEmitter
 }
 
+type HlsLiveOption func(*hlsInputLive)
+
+func OptionLiveWithSidecars(sidecars ...shared.Stream) HlsLiveOption {
+	return func(h *hlsInputLive) {
+		h.sidecars = append(h.sidecars, sidecars...)
+	}
+}
+
 // NewHLSLive returns a Stream that reads a live HLS playlist using gohlslib.Client.
 // No FFmpeg or external RTMP server is required.
-func NewHLSLive(id, uri string) Stream {
-	return &hlsInputLive{
+func NewHLSLive(id, uri string, opts ...HlsLiveOption) Stream {
+	h := &hlsInputLive{
 		id:        id,
 		uri:       uri,
 		videoChan: make(chan *Frame, 300),
@@ -55,12 +64,21 @@ func NewHLSLive(id, uri string) Stream {
 		started:   make(chan struct{}),
 		events:    shared.NewEventEmitter(128),
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(h)
+		}
+	}
+	return h
 }
 
-func (r *hlsInputLive) GetVideoChan() chan *Frame      { return r.videoChan }
-func (r *hlsInputLive) GetAudioChan() chan *Frame      { return r.audioChan }
-func (r *hlsInputLive) GetID() string                  { return r.id }
-func (r *hlsInputLive) Type() string                   { return "hlslive" }
+func (r *hlsInputLive) GetVideoChan() chan *Frame { return r.videoChan }
+func (r *hlsInputLive) GetAudioChan() chan *Frame { return r.audioChan }
+func (r *hlsInputLive) GetID() string             { return r.id }
+func (r *hlsInputLive) Type() string              { return "hlslive" }
+func (r *hlsInputLive) AddSidecars(sidecars ...shared.Stream) {
+	r.sidecars = append(r.sidecars, sidecars...)
+}
 func (r *hlsInputLive) IsRestartable() bool            { return false }
 func (r *hlsInputLive) RestartInterval() time.Duration { return 30 * time.Second }
 
@@ -72,18 +90,22 @@ func (r *hlsInputLive) EventChan() chan shared.Event {
 }
 
 func (r *hlsInputLive) State() *State {
-	return &State{
+	return shared.MergeServedState(&State{
 		LastIO:      r.lastIO,
 		IsResumable: r.isInitiated,
 		IsStarted:   r.isStarted,
 		StreamID:    r.id,
 		Url:         r.uri,
 		Type:        r.Type(),
-	}
+	}, r.sidecars)
 }
 
 func (r *hlsInputLive) Clone() (Stream, error) {
-	return NewHLSLive(r.id, r.uri), nil
+	clonedSidecars, err := shared.CloneStreams(r.sidecars)
+	if err != nil {
+		return nil, err
+	}
+	return NewHLSLive(r.id, r.uri, OptionLiveWithSidecars(clonedSidecars...)), nil
 }
 
 func (r *hlsInputLive) WaitForStart(ctx context.Context) error {
@@ -101,6 +123,7 @@ func (r *hlsInputLive) Stop() {
 	r.mu.Lock()
 	r.isStarted = false
 	r.mu.Unlock()
+	shared.StopSidecars(r.sidecars)
 	if r.events != nil {
 		r.events.Emit(shared.Event{
 			Type:       shared.EventTypeStreamStopped,
@@ -114,6 +137,7 @@ func (r *hlsInputLive) Stop() {
 func (r *hlsInputLive) Close() {
 	r.closeOnce.Do(func() {
 		close(r.done)
+		shared.CloseSidecars(r.sidecars)
 		if r.events != nil {
 			r.events.Emit(shared.Event{
 				Type:       shared.EventTypeStreamClosed,
@@ -132,6 +156,7 @@ func (r *hlsInputLive) Start() {
 		r.isStarted = true
 		r.isInitiated = true
 		r.mu.Unlock()
+		shared.StartSidecars(r.sidecars)
 
 		if r.events != nil {
 			r.events.Emit(shared.Event{
@@ -311,6 +336,7 @@ func (r *hlsInputLive) onVideoFrame(pts, dts int64, au [][]byte, codec string, c
 	r.mu.Unlock()
 
 	r.signalStarted()
+	shared.PushToSidecars(r.sidecars, frame, true)
 
 	select {
 	case r.videoChan <- frame:
@@ -360,6 +386,7 @@ func (r *hlsInputLive) onAudioFrames(pts int64, payloads [][]byte, codec string,
 		r.mu.Unlock()
 
 		r.signalStarted()
+		shared.PushToSidecars(r.sidecars, frame, false)
 
 		select {
 		case r.audioChan <- frame:
