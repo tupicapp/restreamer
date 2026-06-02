@@ -22,6 +22,7 @@ const (
 	defaultHLSSegmentDuration = 2 * time.Second
 	defaultHLSPlaylistSize    = 6
 	defaultHLSTargetDuration  = 2
+	hlsLiveSegmentExpiration  = time.Minute
 )
 
 type hlsSegmentEntry struct {
@@ -578,7 +579,13 @@ func (o *hlsLive) openSegmentLocked(startPTS time.Duration) error {
 	}
 
 	fileName := fmt.Sprintf("seg_%06d.ts", o.segmentIndex)
-	f, err := o.outputFolder.Create(fileName)
+	var expirationTime *time.Time
+	if o.isLive {
+		expiresAt := time.Now().Add(hlsLiveSegmentExpiration)
+		expirationTime = &expiresAt
+	}
+
+	f, err := o.outputFolder.Create(fileName, expirationTime)
 	if err != nil {
 		return err
 	}

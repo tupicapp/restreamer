@@ -10,8 +10,6 @@ import (
 	"go.uber.org/zap"
 )
 
-const nonRestartableRemovableAfter = 5 * time.Second
-
 type streamManager struct {
 	Stream
 	startOnce      sync.Once

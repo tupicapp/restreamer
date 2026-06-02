@@ -78,11 +78,12 @@ func (f *Folder) Stat(path string) (fs.FileInfo, error) {
 	return os.Stat(fullPath)
 }
 
-func (f *Folder) Create(path string) (io.WriteCloser, error) {
+func (f *Folder) Create(path string, expirationTime *time.Time) (io.WriteCloser, error) {
 	fullPath := filepath.Join(f.basePath, path)
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
 		return nil, err
 	}
+	_ = expirationTime
 	return os.Create(fullPath)
 }
 

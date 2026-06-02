@@ -647,7 +647,13 @@ func (o *hlsLiveAsync) uploadSegment(seg *hlsBuiltSegment) error {
 		return fmt.Errorf("hls destination output folder is nil")
 	}
 
-	f, err := o.outputFolder.Create(seg.FileName)
+	var expirationTime *time.Time
+	if o.isLive {
+		expiresAt := time.Now().Add(hlsLiveSegmentExpiration)
+		expirationTime = &expiresAt
+	}
+
+	f, err := o.outputFolder.Create(seg.FileName, expirationTime)
 	if err != nil {
 		return err
 	}
@@ -737,9 +743,6 @@ func (o *hlsLiveAsync) writePlaylistLocked(endList bool) error {
 func (o *hlsLiveAsync) objectURL(fileName string) string {
 	return shared.PreferredURL("", o.outputFolder, fileName)
 }
-
-
-
 
 func (o *hlsLiveAsync) playlistURL() string {
 	return o.objectURL("stream.m3u8")

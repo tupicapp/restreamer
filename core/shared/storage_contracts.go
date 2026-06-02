@@ -16,7 +16,7 @@ type Folder interface {
 	ReadDir() ([]fs.DirEntry, error)
 	Stat(path string) (fs.FileInfo, error)
 
-	Create(path string) (io.WriteCloser, error)
+	Create(path string, expirationTime *time.Time) (io.WriteCloser, error)
 	WriteFile(path string, data []byte) error
 	Rename(oldPath, newPath string) error
 
@@ -153,8 +153,8 @@ func (a folderAdapter) Stat(path string) (fs.FileInfo, error) {
 	return info, toError(out[1].Interface())
 }
 
-func (a folderAdapter) Create(path string) (io.WriteCloser, error) {
-	out := a.call("Create", path)
+func (a folderAdapter) Create(path string, expirationTime *time.Time) (io.WriteCloser, error) {
+	out := a.call("Create", path, expirationTime)
 	return out[0].Interface().(io.WriteCloser), toError(out[1].Interface())
 }
 
