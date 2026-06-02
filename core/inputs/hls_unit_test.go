@@ -101,3 +101,63 @@ func TestHLSDownloadPlaylistFromFileURI(t *testing.T) {
 		t.Fatalf("downloadPlaylist returned %q, want %q", string(got), string(want))
 	}
 }
+
+func TestHLSStateMarksRemovableAfterEndListIsDrained(t *testing.T) {
+	tmpDir := t.TempDir()
+	playlistPath := filepath.Join(tmpDir, "playlist.m3u8")
+	content := "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXTINF:2,\nseg0.ts\n#EXT-X-ENDLIST\n"
+	if err := os.WriteFile(playlistPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed to create playlist: %v", err)
+	}
+
+	reader, ok := NewHLS("unit-reader", playlistPath).(*hlsInput)
+	if !ok || reader == nil {
+		t.Fatal("expected hlsInput instance")
+	}
+
+	if err := reader.updateMediaPlaylist(); err != nil {
+		t.Fatalf("updateMediaPlaylist failed: %v", err)
+	}
+
+	if got := reader.State().IsRemovable; got {
+		t.Fatal("expected queued final segment to keep hls input non-removable")
+	}
+
+	select {
+	case <-reader.segmentsChan:
+	default:
+		t.Fatal("expected queued final segment")
+	}
+
+	if got := reader.State().IsRemovable; !got {
+		t.Fatal("expected hls input to become removable after endlist is drained")
+	}
+}
+
+func TestHLSStateNotRemovableWithoutEndList(t *testing.T) {
+	tmpDir := t.TempDir()
+	playlistPath := filepath.Join(tmpDir, "playlist.m3u8")
+	content := "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXTINF:2,\nseg0.ts\n"
+	if err := os.WriteFile(playlistPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed to create playlist: %v", err)
+	}
+
+	reader, ok := NewHLS("unit-reader", playlistPath).(*hlsInput)
+	if !ok || reader == nil {
+		t.Fatal("expected hlsInput instance")
+	}
+
+	if err := reader.updateMediaPlaylist(); err != nil {
+		t.Fatalf("updateMediaPlaylist failed: %v", err)
+	}
+
+	select {
+	case <-reader.segmentsChan:
+	default:
+		t.Fatal("expected queued segment")
+	}
+
+	if got := reader.State().IsRemovable; got {
+		t.Fatal("expected hls input without endlist to stay non-removable")
+	}
+}

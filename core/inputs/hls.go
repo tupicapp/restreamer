@@ -42,6 +42,7 @@ type hlsInput struct {
 
 	audioMu sync.RWMutex
 	videoMu sync.RWMutex
+	stateMu sync.RWMutex
 
 	IsStarted   bool
 	IsInitiated bool
@@ -83,6 +84,8 @@ type hlsInput struct {
 	segmentFactory *segmentFactory
 	realTime       bool
 	events         *shared.EventEmitter
+	sawEndList     bool
+	readerActive   bool
 }
 
 type HlsOption func(*hlsInput)
@@ -194,6 +197,7 @@ func (r *hlsInput) State() *State {
 	return shared.MergeServedState(&State{
 		LastIO:             r.LastIO,
 		IsStarted:          r.IsStarted,
+		IsRemovable:        r.isRemovable(),
 		StreamID:           r.id,
 		Url:                r.uri,
 		Type:               r.Type(),
@@ -202,6 +206,26 @@ func (r *hlsInput) State() *State {
 		TotalVideoFrames:   r.TotalVideoFrames,
 		TotalAudioFrames:   r.TotalAudioFrames,
 	}, r.sidecars)
+}
+
+func (r *hlsInput) isRemovable() bool {
+	r.stateMu.RLock()
+	sawEndList := r.sawEndList
+	readerActive := r.readerActive
+	r.stateMu.RUnlock()
+
+	if !sawEndList || readerActive || len(r.segmentsChan) > 0 {
+		return false
+	}
+
+	r.pendingMu.Lock()
+	defer r.pendingMu.Unlock()
+
+	return !r.openSegment &&
+		len(r.pendingVideoBuf) == 0 &&
+		len(r.pendingAudioBuf) == 0 &&
+		len(r.videoSegmentCounts) == 0 &&
+		len(r.audioSegmentCounts) == 0
 }
 
 func (r *hlsInput) Clone() (Stream, error) {
@@ -579,6 +603,9 @@ func (r *hlsInput) updateMediaPlaylist() error {
 	}
 
 	r.segmentFactory.SetMediaPlayList(mediaPlaylist.Map)
+	r.stateMu.Lock()
+	r.sawEndList = strings.Contains(string(playlistData), "#EXT-X-ENDLIST")
+	r.stateMu.Unlock()
 
 	for _, segment := range mediaPlaylist.Segments {
 		_, ok := r.segmentsMap[segment.URI]
@@ -630,6 +657,9 @@ func (r *hlsInput) run() {
 						time.Sleep(time.Millisecond * 5)
 						continue
 					}
+					r.stateMu.Lock()
+					r.readerActive = true
+					r.stateMu.Unlock()
 					r.beginSegment()
 				default:
 					time.Sleep(5 * time.Millisecond)
@@ -640,6 +670,9 @@ func (r *hlsInput) run() {
 			err = reader.Read()
 			if err == io.EOF {
 				r.endSegment()
+				r.stateMu.Lock()
+				r.readerActive = false
+				r.stateMu.Unlock()
 				reader = nil
 				continue
 			}

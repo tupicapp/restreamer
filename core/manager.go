@@ -2,9 +2,10 @@ package irajstreamer
 
 import (
 	"context"
-	"github.com/tupicapp/restreamer/core/logger"
 	"sync"
 	"time"
+
+	"github.com/tupicapp/restreamer/core/logger"
 
 	"go.uber.org/zap"
 )
@@ -62,9 +63,6 @@ func (s *streamManager) State() *State {
 	}
 
 	cloned := *state
-	if !s.Stream.IsRestartable() && state.IsStarted && !state.LastIO.IsZero() && time.Since(state.LastIO) > nonRestartableRemovableAfter {
-		cloned.IsRemovable = true
-	}
 	return &cloned
 }
 
