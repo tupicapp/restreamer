@@ -213,9 +213,11 @@ func (o *hlsLive) Start() {
 	o.isInitiated = true
 	o.isStarted = true
 
-	if err := o.outputFolder.RemoveAll(); err != nil {
-		getLogger().Error("hls destination remove dir failed", zap.String("path", o.localPath()), zap.Error(err))
-		return
+	if o.isLive {
+		if err := o.outputFolder.RemoveAll(); err != nil {
+			getLogger().Error("hls destination remove dir failed", zap.String("path", o.localPath()), zap.Error(err))
+			return
+		}
 	}
 
 	if o.isLive && o.cleanInterval > 0 {
