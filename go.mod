@@ -5,8 +5,8 @@ go 1.26.2
 require (
 	github.com/bluenviron/gohlslib/v2 v2.3.2
 	github.com/bluenviron/gortmplib v0.3.2
-	github.com/bluenviron/gortsplib/v5 v5.5.3
-	github.com/bluenviron/mediacommon/v2 v2.8.3
+	github.com/bluenviron/gortsplib/v5 v5.5.4
+	github.com/bluenviron/mediacommon/v2 v2.9.0
 	github.com/gwuhaolin/livego v0.0.0-20241106020610-16c6af5d9031
 	github.com/nareix/joy4 v0.0.0-20200507095837-05a4ffbb5369
 	github.com/spf13/cobra v1.10.2
@@ -15,7 +15,7 @@ require (
 )
 
 require (
-	github.com/abema/go-mp4 v1.5.0 // indirect
+	github.com/abema/go-mp4 v1.6.0 // indirect
 	github.com/asticode/go-astikit v0.30.0 // indirect
 	github.com/asticode/go-astits v1.15.0 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
@@ -39,6 +39,6 @@ require (
 	github.com/subosito/gotenv v1.6.0 // indirect
 	go.uber.org/multierr v1.10.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/sys v0.44.0 // indirect
-	golang.org/x/text v0.28.0 // indirect
+	golang.org/x/sys v0.45.0 // indirect
+	golang.org/x/text v0.37.0 // indirect
 )
