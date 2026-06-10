@@ -481,6 +481,8 @@ func createSwitchInputStream(routeID, streamID string, spec inputSpec) (core.Str
 	if err != nil {
 		return nil, nil, err
 	}
+
+	streamOpts = append(streamOpts, streamfactory.WithLoop())
 	stream, err := streamfactory.NewInput(streamID, spec.url, streamOpts...)
 	if err != nil {
 		for _, sidecar := range sidecars {
