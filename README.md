@@ -99,3 +99,4 @@ If users integrate as a Go library, the switch flow is:
 - Assumption: `Pipe` is a single-writer, single-reader in-memory bridge. The writer side returned by `AsOutput()` owns closure of the shared bridge, and the reader side returned by `AsInput()` observes end-of-stream by receiving closed channels.
 - HLS live output is now real-audio-only at destination level: it does not synthesize repeated AAC packets, does not clamp audio PTS to video PTS, and does not drop audio solely for temporary audio-ahead drift.
 - Assumption: live HLS cross-input switch commit is guarded by destination-side video config readiness; the switch is deferred until a compatible H.264 keyframe is available.
+- Assumption: `inputs.NewHLS(..., inputs.WithLoop())` replays `#EXT-X-ENDLIST` playlists from the beginning instead of becoming removable, and leaves emitted timestamps unchanged so downstream layers can decide how to handle loop boundaries.

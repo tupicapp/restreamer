@@ -26,6 +26,7 @@ const (
 
 type StreamOptions struct {
 	Sidecars []shared.Stream
+	Loop     bool
 }
 
 type StreamOption func(*StreamOptions)
@@ -35,6 +36,12 @@ func WithStreamServer(streamServer shared.Stream) StreamOption {
 		if streamServer != nil {
 			opts.Sidecars = append(opts.Sidecars, streamServer)
 		}
+	}
+}
+
+func WithLoop() StreamOption {
+	return func(opts *StreamOptions) {
+		opts.Loop = true
 	}
 }
 
@@ -50,8 +57,12 @@ func NewInput(id, streamURL string, opts ...StreamOption) (core.Stream, error) {
 	case streamKindFile, streamKindHLSLive:
 		// Probe the playlist: #EXT-X-ENDLIST → VOD/file, absent → live.
 		// OptionWithRealTime applies only to the VOD path (hlsInput).
+		hlsOpts := []inputs.HlsOption{inputs.OptionWithRealTime(true)}
+		if cfg.Loop {
+			hlsOpts = append(hlsOpts, inputs.WithLoop())
+		}
 		var err error
-		stream, err = inputs.NewHLSAuto(id, streamURL, cfg.Sidecars, inputs.OptionWithRealTime(true))
+		stream, err = inputs.NewHLSAuto(id, streamURL, cfg.Sidecars, hlsOpts...)
 		if err != nil {
 			return nil, err
 		}

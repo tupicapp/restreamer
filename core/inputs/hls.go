@@ -86,6 +86,7 @@ type hlsInput struct {
 	events         *shared.EventEmitter
 	sawEndList     bool
 	readerActive   bool
+	loopEnabled    bool
 }
 
 type HlsOption func(*hlsInput)
@@ -97,6 +98,12 @@ func OptionWithRealTime(realTime bool) HlsOption {
 func OptionWithSidecars(sidecars ...shared.Stream) HlsOption {
 	return func(h *hlsInput) {
 		h.sidecars = append(h.sidecars, sidecars...)
+	}
+}
+
+func WithLoop() HlsOption {
+	return func(h *hlsInput) {
+		h.loopEnabled = true
 	}
 }
 
@@ -212,7 +219,12 @@ func (r *hlsInput) isRemovable() bool {
 	r.stateMu.RLock()
 	sawEndList := r.sawEndList
 	readerActive := r.readerActive
+	loopEnabled := r.loopEnabled
 	r.stateMu.RUnlock()
+
+	if loopEnabled {
+		return false
+	}
 
 	if !sawEndList || readerActive || len(r.segmentsChan) > 0 {
 		return false
@@ -233,7 +245,15 @@ func (r *hlsInput) Clone() (Stream, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewHLS(r.id, r.uri, OptionWithSidecars(clonedSidecars...)), nil
+	opts := make([]HlsOption, 0, 3)
+	if r.realTime {
+		opts = append(opts, OptionWithRealTime(true))
+	}
+	if r.loopEnabled {
+		opts = append(opts, WithLoop())
+	}
+	opts = append(opts, OptionWithSidecars(clonedSidecars...))
+	return NewHLS(r.id, r.uri, opts...), nil
 }
 
 func (r *hlsInput) WaitForStart(ctx context.Context) error {
@@ -322,6 +342,35 @@ func (r *hlsInput) endSegment() {
 	r.pendingMu.Lock()
 	defer r.pendingMu.Unlock()
 	r.openSegment = false
+}
+
+func (r *hlsInput) readyForLoopReset() bool {
+	r.stateMu.RLock()
+	loopEnabled := r.loopEnabled
+	sawEndList := r.sawEndList
+	readerActive := r.readerActive
+	r.stateMu.RUnlock()
+
+	if !loopEnabled || !sawEndList || readerActive || len(r.segmentsChan) > 0 {
+		return false
+	}
+
+	r.pendingMu.Lock()
+	defer r.pendingMu.Unlock()
+
+	return !r.openSegment &&
+		len(r.pendingVideoBuf) == 0 &&
+		len(r.pendingAudioBuf) == 0 &&
+		len(r.videoSegmentCounts) == 0 &&
+		len(r.audioSegmentCounts) == 0
+}
+
+func (r *hlsInput) prepareLoopReset() {
+	r.stateMu.Lock()
+	r.sawEndList = false
+	r.stateMu.Unlock()
+
+	r.segmentsMap = make(map[string]struct{})
 }
 
 // bufferedSegmentCount returns the total number of segments (open + closed)
@@ -605,7 +654,12 @@ func (r *hlsInput) updateMediaPlaylist() error {
 	r.segmentFactory.SetMediaPlayList(mediaPlaylist.Map)
 	r.stateMu.Lock()
 	r.sawEndList = strings.Contains(string(playlistData), "#EXT-X-ENDLIST")
+	loopEnabled := r.loopEnabled
 	r.stateMu.Unlock()
+
+	if loopEnabled && r.readyForLoopReset() {
+		r.prepareLoopReset()
+	}
 
 	for _, segment := range mediaPlaylist.Segments {
 		_, ok := r.segmentsMap[segment.URI]
