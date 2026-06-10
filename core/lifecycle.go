@@ -233,5 +233,5 @@ func (s *Streamer) StartLife() {
 	go s.startAudio()
 	go s.startSwitcher()
 	go s.startCleanup()
-	go s.startAutoSwitch()
+	// go s.startAutoSwitch()
 }
