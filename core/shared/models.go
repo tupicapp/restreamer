@@ -43,20 +43,22 @@ type Event struct {
 type EventType string
 
 const (
-	EventTypeStreamStarted      EventType = "stream_started"
-	EventTypeStreamStopped      EventType = "stream_stopped"
-	EventTypeStreamClosed       EventType = "stream_closed"
-	EventTypeStreamError        EventType = "stream_error"
-	EventTypeStreamAdded        EventType = "stream_added"
-	EventTypeInputAdded         EventType = "input_added"
-	EventTypeInputRemoved       EventType = "input_removed"
-	EventTypeDestinationAdded   EventType = "destination_added"
-	EventTypeDestinationRemoved EventType = "destination_removed"
-	EventTypeInputSwitched      EventType = "input_switched"
-	EventTypeSceneAdded         EventType = "scene_added"
-	EventTypeSceneActivated     EventType = "scene_activated"
-	EventTypeSegmentGenerated   EventType = "segment_generated"
-	EventTypeRecordStarted      EventType = "record_started"
+	EventTypeStreamStarted        EventType = "stream_started"
+	EventTypeStreamStopped        EventType = "stream_stopped"
+	EventTypeStreamClosed         EventType = "stream_closed"
+	EventTypeStreamError          EventType = "stream_error"
+	EventTypeManifestUpdated      EventType = "manifest_updated"
+	EventTypeTimelineEventApplied EventType = "timeline_event_applied"
+	EventTypeStreamAdded          EventType = "stream_added"
+	EventTypeInputAdded           EventType = "input_added"
+	EventTypeInputRemoved         EventType = "input_removed"
+	EventTypeDestinationAdded     EventType = "destination_added"
+	EventTypeDestinationRemoved   EventType = "destination_removed"
+	EventTypeInputSwitched        EventType = "input_switched"
+	EventTypeSceneAdded           EventType = "scene_added"
+	EventTypeSceneActivated       EventType = "scene_activated"
+	EventTypeSegmentGenerated     EventType = "segment_generated"
+	EventTypeRecordStarted        EventType = "record_started"
 )
 
 type StreamLifecycleMeta struct {

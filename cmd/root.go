@@ -14,4 +14,5 @@ func Execute() error {
 func init() {
 	rootCmd.AddCommand(NewSceneCommand())
 	rootCmd.AddCommand(NewSwitchCommand())
+	rootCmd.AddCommand(NewServerCommand())
 }

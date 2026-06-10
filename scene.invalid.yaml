@@ -1,0 +1,76 @@
+version: 1
+
+runtime:
+  timezone: UTC
+  reload:
+    debounce_ms: 250
+    atomic_swap: true
+    keep_last_good: true
+    require_output_continuity: true
+
+defaults:
+  video:
+    width: 1280
+    height: 720
+    fps: 30
+    format: RGBA
+  audio:
+    sample_rate: 48000
+    channels: 2
+    layout: stereo
+
+sources:
+  - id: cam_a
+    uri: rtmp://ball
+    kind: av
+
+nodes:
+  - id: main_switch
+    type: switch
+    mode: scene
+    inputs:
+      - cam_a_full
+    default_input: cam_a_full
+
+scenes:
+  - id: cam_a_full
+    kind: compose
+    canvas:
+      width: 1280
+      height: 720
+      fps: 30
+    stale_policy:
+      video: hold_last_frame
+      audio: silence
+      timeout_ms: 800
+    layers:
+      - source: cam_a
+        x: 0
+        y: 0
+        width: 1280
+        height: 720
+        z: 0
+        audio:
+          mode: direct
+
+programs:
+  - id: test_program
+    root: main_switch
+    schedule:
+      timezone: UTC
+      entries:
+        - at: "00:00:00"
+          select: cam_a_full
+          transition:
+            type: cut
+            duration_ms: 0
+
+outputs:
+  - id: local_file
+    program: test_program
+    continuity:
+      keep_running_on_reload_error: true
+    sinks:
+      - id: mp4_out
+        type: file
+        path: ./out/invalid.mp4

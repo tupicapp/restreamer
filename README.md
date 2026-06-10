@@ -28,6 +28,24 @@ go run main.go switch \
   -o rtmp://localhost:1938/live/out
 ```
 
+## Studio Server
+
+Run the backend API server:
+
+```bash
+./run.sh
+```
+
+Run the React frontend:
+
+```bash
+./web.sh
+```
+
+Open the studio dashboard at `http://127.0.0.1:4173/<channel_id>`.
+
+The frontend development server proxies `/api/*` requests to `http://127.0.0.1:8080`, and the studio UI uses channel-scoped endpoints under `/api/channels/<channel_id>/studio/...`.
+
 How it behaves:
 
 - `switch` starts all inputs/outputs, activates input 1 first, then opens an interactive switcher when more than one input exists.
@@ -99,3 +117,9 @@ If users integrate as a Go library, the switch flow is:
 - Assumption: `Pipe` is a single-writer, single-reader in-memory bridge. The writer side returned by `AsOutput()` owns closure of the shared bridge, and the reader side returned by `AsInput()` observes end-of-stream by receiving closed channels.
 - HLS live output is now real-audio-only at destination level: it does not synthesize repeated AAC packets, does not clamp audio PTS to video PTS, and does not drop audio solely for temporary audio-ahead drift.
 - Assumption: live HLS cross-input switch commit is guarded by destination-side video config readiness; the switch is deferred until a compatible H.264 keyframe is available.
+- Assumption: the new manifest-driven runner is exposed through `core.NewManifestRunner(...)` and currently accepts only manifest version `1.0`; richer manifest fields already exist in the domain model but are rejected until their runtime support is implemented.
+- Assumption: manifest version `1.0` is currently executable only for a strict single-scene, single-slot, contiguous element timeline. The runner builds concrete input streams under `TimeLinedStreamer` and switches them on schedule on top of the underlying `Streamer`.
+- Assumption: channel-scoped manifest apply in the API auto-starts the related runner so the workspace always gets a non-empty runtime state plus a default channel output without needing a separate explicit start step from the frontend.
+- Assumption: `TimeLinedStreamer` keeps `Streamer` untouched and now attaches one default live HLS channel output per channel under a local temp directory rooted at `os.TempDir()/irajstreamer/timeline-hls`; the API exposes that output at `/hls/channels/<channel_id>/stream.m3u8`, and the studio preview consumes the backend-provided HLS URL directly.
+- Assumption: `api/` now exposes a lightweight HTTP server for the studio/frontend flow and currently keeps studio state plus manifest runners in memory; persistence, auth, and production transport concerns are still out of scope.
+- Assumption: studio/frontend channel dashboards are path-scoped (`/<channel_id>`) and currently map to in-memory per-channel studio state on the backend. Channel-specific details are derived from that channel id unless a richer persisted channel model is added later.

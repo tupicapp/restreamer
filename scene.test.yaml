@@ -1,0 +1,138 @@
+version: 1
+runtime:
+  reload:
+    debounce_ms: 250
+    atomic_swap: true
+    keep_last_good: true
+    require_output_continuity: true
+sources:
+  - id: left
+    uri: 'rtmp://localhost:1938/live/2'
+    kind: av
+  - id: right
+    uri: 'rtmp://localhost:1938/live/1'
+    kind: av
+nodes:
+  - id: program_switch
+    type: switch
+    mode: scene
+    inputs:
+      - left_full
+      - side_by_side
+      - side_by_side_2
+      - right_full
+      - swapped
+    default_input: side_by_side
+scenes:
+  - id: left_full
+    kind: compose
+    canvas:
+      width: 1280
+      height: 360
+      fps: 25
+    layers:
+      - source: left
+        x: 0
+        y: 0
+        width: 1280
+        height: 360
+        z: 0
+        audio:
+          mode: direct
+  - id: side_by_side
+    kind: compose
+    canvas:
+      width: 1280
+      height: 360
+      fps: 25
+    layers:
+      - source: left
+        x: 0
+        y: 0
+        width: 640
+        height: 360
+        z: 0
+        audio:
+          mode: mute
+      - source: right
+        x: 640
+        y: 0
+        width: 640
+        height: 360
+        z: 1
+        audio:
+          mode: direct
+  - id: side_by_side_2
+    kind: compose
+    canvas:
+      width: 1280
+      height: 360
+      fps: 25
+    layers:
+      - source: left
+        x: 0
+        y: 0
+        width: 640
+        height: 360
+        z: 0
+        audio:
+          mode: direct
+      - source: right
+        x: 640
+        y: 0
+        width: 640
+        height: 360
+        z: 1
+        audio:
+          mode: mute
+  - id: right_full
+    kind: compose
+    canvas:
+      width: 1280
+      height: 360
+      fps: 25
+    layers:
+      - source: right
+        x: 0
+        y: 0
+        width: 1280
+        height: 360
+        z: 0
+        audio:
+          mode: direct
+  - id: swapped
+    kind: compose
+    canvas:
+      width: 1280
+      height: 360
+      fps: 25
+    layers:
+      - source: right
+        x: 0
+        y: 0
+        width: 640
+        height: 360
+        z: 0
+        audio:
+          mode: mute
+      - source: left
+        x: 640
+        y: 0
+        width: 640
+        height: 360
+        z: 1
+        audio:
+          mode: direct
+programs:
+  - id: demo_program
+    root: program_switch
+outputs:
+  - id: out
+    program: demo_program
+    sinks:
+      - id: rtmp_out
+        type: rtmp
+        uri: rtmp://localhost:1938/live/out
+      - id: hls_out
+        type: hls
+        path: ./record/stream.m3u8

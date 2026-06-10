@@ -1,0 +1,174 @@
+{
+  "version": "10.0",
+  "channel_id": "123",
+  "active_scene_id": "scene_1",
+  "output_settings": {
+    "resolution": "720p",
+    "ratio": "1:1",
+    "framerate": 30,
+    "video_bitrate": 4000,
+    "audio_sample_rate": 44100,
+    "video_codec": "h264",
+    "audio_codec": "aac"
+  },
+  "lives" :  [
+      {
+        "branch_type":"element",
+        "id":"el_1"
+      },
+      {
+        "branch_type":"slot",
+        "id":"slot_1"
+      }
+    ]
+  ,
+  "records" : {
+      {
+        "branch_type":"element",
+        "id":"el_1"
+      },
+      {
+        "branch_type":"slot",
+        "id":"slot_1"
+      }
+  },
+  "scenes" : [
+    {
+      "id":"scene_1",
+      "details": [],
+      "slots": [
+        {
+          "slot_id": "slot_1",
+          "details": {
+            "top": 58,
+            "left": 10,
+            "width": 25,
+            "height": 84,
+            "z_index": 6,
+            "opacity": 100,
+            "volume": 100,
+            "box_mode": "cover"
+          },
+          "elements": [
+            {
+              "details": {},
+              "id": "el_1",
+              "source_type": "asset | link | transition", 
+              "source_id": "asset_id | link_id | transition_id", 
+              "url": "https://www.feldmann.com/libero-est-eligendi-occaecati-tenetur-excepturi-qui",
+              "asset_trim": {
+                "start": "10.0s",
+                "end": "20.0s"
+              },
+              "starts_at": 1763472641, 
+              "finishes_at": 1763479841,
+              "filters" : [ "blur", "edge_detect", "sharpen" ]
+            },
+            {
+              "details": {},
+              "id": "el_2",
+              "source_type": "asset | link | transition", 
+              "source_id": "asset_id | link_id | transition_id (fade, wipe, slide, etc)", 
+              "starts_at": 1763479841,
+              "finishes_at": 1763479842
+            },
+            {
+              "details": {},
+              "id": "el_3",
+              "source_type": "asset | link",
+              "source_id": "asset_id | link_id",
+              "url": "https://runge.org/unde-et-ut-ipsam-voluptas-nulla-optio-ad.html",
+              "starts_at": 1763479842,
+              "finishes_at": -1
+            }
+          ]
+        }
+        {
+          "slot_id": "slot_2",
+          "details": {
+            "top": 58,
+            "left": 10,
+            "width": 25,
+            "height": 84,
+            "z_index": 6,
+            "opacity": 100,
+            "box_mode": "original"
+          },
+          "elements": [
+            {
+              "details": {},
+              "url": "https://www.feldmann.com/libero-est-eligendi-occaecati-tenetur-excepturi-qui",
+              "starts_at": 1763472641,
+              "finishes_at": 1763479841
+            },
+            {
+              "details": {},
+              "url": "https://runge.org/unde-et-ut-ipsam-voluptas-nulla-optio-ad.html",
+              "starts_at": 1763472641,
+              "finishes_at": 1763479841
+            }
+          ]
+        }
+      ],
+      "audio_elements": [
+        [
+          {
+            "details": {"volume" : 100},
+            "url": "http://www.hartung.de/et-rerum-quod-iusto-cumque-rerum-id-consequatur-commodi",
+            "starts_at": 1763472641,
+            "finishes_at": 1763479841
+          },
+          {
+            "details": {"volume" : 50},
+            "url": "rtmp://hello.com",
+            "starts_at": 1763472641,
+            "finishes_at": -1
+          }
+        ]
+      ]
+    }
+    },
+    {
+      "id":"scene_2",
+      "details": [],
+      "slots": [
+        {
+          "details": {
+            "top": 58,
+            "left": 10,
+            "width": 25,
+            "height": 84,
+            "z_index": 6,
+            "opacity": 100,
+            "volume": 100
+          },
+          "elements": [
+            {
+              "details": {},
+              "url": "https://www.feldmann.com/libero-est-eligendi-occaecati-tenetur-excepturi-qui",
+              "starts_at": 1763472641,
+              "finishes_at": 1763479841
+            },
+            {
+              "details": {},
+              "url": "https://runge.org/unde-et-ut-ipsam-voluptas-nulla-optio-ad.html",
+              "starts_at": 1763472641,
+              "finishes_at": -1
+            }
+          ]
+        }
+      ],
+      "audio_elements": [
+        [
+          {
+            "details": {"volume" : 100},
+            "url": "http://www.hartung.de/et-rerum-quod-iusto-cumque-rerum-id-consequatur-commodi",
+            "starts_at": 1763472641,
+            "finishes_at": 1763479841
+          }
+        ]
+      ]
+    }
+    }
+ ]
+}

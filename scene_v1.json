@@ -1,0 +1,35 @@
+{
+  "version": "1.0",
+  "channel_id": "123",
+  "scenes" : [
+    {
+      "id":"scene_1",
+      "details": [],
+      "slots": [
+        {
+          "details": {},
+          "elements": [
+            {
+              "details": {},
+              "id": "el_1",
+              "source_type": "link", 
+              "source_id": "link_id", 
+              "url": "https://www.feldmann.com/libero-est-eligendi-occaecati-tenetur-excepturi-qui",
+              "starts_at": 1763472641, 
+              "finishes_at": 1763479841
+            },
+            {
+              "details": {},
+              "id": "el_3",
+              "source_type": "link",
+              "source_id": "link_id",
+              "url": "https://runge.org/unde-et-ut-ipsam-voluptas-nulla-optio-ad.html",
+              "starts_at": 1763479841,
+              "finishes_at": -1
+            }
+          ]
+        }
+      ]
+    }
+ ]
+}
