@@ -76,41 +76,55 @@ func (s *Streamer) UpdateStreams(inputs []Stream, outputs []Stream) error {
 	}()
 
 	wg.Wait()
+	s.resetPipelineIfInputless()
 
 	return nil
 }
 
 func (s *Streamer) AddInput(i Stream) error {
 	s.inputsMu.Lock()
-	defer s.inputsMu.Unlock()
-	return s.upsertInputLocked(i)
+	err := s.upsertInputLocked(i)
+	s.inputsMu.Unlock()
+	if err != nil {
+		return err
+	}
+	s.resetPipelineIfInputless()
+	return nil
 }
 
 // if it doesnt exist its no-op
 func (s *Streamer) RemoveInput(streamID string) {
 	s.inputsMu.Lock()
-	defer s.inputsMu.Unlock()
 	s.removeInputLocked(streamID, nil, false)
+	s.inputsMu.Unlock()
+	s.resetPipelineIfInputless()
 }
 
 func (s *Streamer) RemoveInputIfSame(streamID string, expected Stream) bool {
 	s.inputsMu.Lock()
-	defer s.inputsMu.Unlock()
-	return s.removeInputLocked(streamID, expected, true)
+	removed := s.removeInputLocked(streamID, expected, true)
+	s.inputsMu.Unlock()
+	s.resetPipelineIfInputless()
+	return removed
 }
 
 func (s *Streamer) AddOutput(o Stream) error {
 	s.outputsMu.Lock()
-	defer s.outputsMu.Unlock()
-	return s.upsertOutputLocked(o)
+	err := s.upsertOutputLocked(o)
+	s.outputsMu.Unlock()
+	if err != nil {
+		return err
+	}
+	s.resetPipelineIfInputless()
+	return nil
 }
 
 func (s *Streamer) RemoveOutput(outputID string) {
 	s.outputsMu.Lock()
-	defer s.outputsMu.Unlock()
 
 	output, ok := s.outputs[outputID]
 	if !ok {
+		s.outputsMu.Unlock()
 		return
 	}
 
@@ -131,6 +145,8 @@ func (s *Streamer) RemoveOutput(outputID string) {
 	})
 
 	delete(s.outputs, outputID)
+	s.outputsMu.Unlock()
+	s.resetPipelineIfInputless()
 }
 
 func (s *Streamer) StopOutput(outputID string) bool {
@@ -318,6 +334,46 @@ func (s *Streamer) upsertOutputLocked(newOutput Stream) error {
 		},
 	})
 	return nil
+}
+
+func (s *Streamer) resetPipelineIfInputless() {
+	s.inputsMu.Lock()
+	defer s.inputsMu.Unlock()
+
+	if len(s.inputs) != 0 {
+		return
+	}
+
+	s.activeInputID = ""
+	s.stagedInputID = ""
+
+	s.outputsMu.Lock()
+	defer s.outputsMu.Unlock()
+
+	for id, output := range s.outputs {
+		if output == nil {
+			delete(s.outputs, id)
+			continue
+		}
+
+		output.Stop()
+		output.Close()
+
+		s.emitEvent(shared.Event{
+			Type:       shared.EventTypeDestinationRemoved,
+			StreamID:   s.streamerIDOrDefault(),
+			StreamType: "streamer",
+			Message:    "destination removed from streamer",
+			Meta: shared.ChildStreamMeta{
+				Role:      "destination",
+				ChildID:   id,
+				ChildType: output.Type(),
+				Managed:   true,
+			},
+		})
+
+		delete(s.outputs, id)
+	}
 }
 
 func (s *Streamer) removeInputLocked(streamID string, expected Stream, matchExpected bool) bool {
